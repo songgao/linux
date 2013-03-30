@@ -1,5 +1,6 @@
 /*
  * Copyright (c) 2008-2009 Atheros Communications Inc.
+ * Copyright (c) 2012-2013 Ildar Abubakirov, Componentality Oy
  *
  * Permission to use, copy, modify, and/or distribute this software for any
  * purpose with or without fee is hereby granted, provided that the above
@@ -42,12 +43,17 @@ static int __ath_regd_init(struct ath_regulatory *reg);
 				NL80211_RRF_PASSIVE_SCAN | NL80211_RRF_NO_OFDM)
 
 /* We allow IBSS on these on a case by case basis by regulatory domain */
-#define ATH9K_5GHZ_5150_5350	REG_RULE(5150-10, 5350+10, 40, 0, 30,\
+#define ATH9K_5GHZ_5150_5350	REG_RULE(5150-10, 5250, 40, 0, 30, 0), \
+				REG_RULE(5250, 5350+10, 40, 0, 30,\
 				NL80211_RRF_PASSIVE_SCAN | NL80211_RRF_NO_IBSS)
 #define ATH9K_5GHZ_5470_5850	REG_RULE(5470-10, 5850+10, 40, 0, 30,\
 				NL80211_RRF_PASSIVE_SCAN | NL80211_RRF_NO_IBSS)
 #define ATH9K_5GHZ_5725_5850	REG_RULE(5725-10, 5850+10, 40, 0, 30,\
 				NL80211_RRF_PASSIVE_SCAN | NL80211_RRF_NO_IBSS)
+
+/* 5.85 - 5.95 GHz frequency band */
+#define ATH9K_DSRC_5850_5950	REG_RULE(5850, 5930, 20, 0, 43,\
+/* 172 */		NL80211_RRF_PASSIVE_SCAN)
 
 #define ATH9K_2GHZ_ALL		ATH9K_2GHZ_CH01_11, \
 				ATH9K_2GHZ_CH12_13, \
@@ -89,6 +95,7 @@ static const struct ieee80211_regdomain ath_world_regdom_64 = {
 	.reg_rules = {
 		ATH9K_2GHZ_CH01_11,
 		ATH9K_5GHZ_NO_MIDBAND,
+		ATH9K_DSRC_5850_5950,
 	}
 };
 

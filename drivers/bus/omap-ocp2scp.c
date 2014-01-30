@@ -32,18 +32,20 @@ static int ocp2scp_remove_devices(struct device *dev, void *c)
 	return 0;
 }
 
-static int __devinit omap_ocp2scp_probe(struct platform_device *pdev)
+static int omap_ocp2scp_probe(struct platform_device *pdev)
 {
-	int			ret;
-	struct device_node	*np = pdev->dev.of_node;
+	int ret;
+	struct device_node *np = pdev->dev.of_node;
 
 	if (np) {
 		ret = of_platform_populate(np, NULL, NULL, &pdev->dev);
 		if (ret) {
-			dev_err(&pdev->dev, "failed to add resources for ocp2scp child\n");
+			dev_err(&pdev->dev,
+			    "failed to add resources for ocp2scp child\n");
 			goto err0;
 		}
 	}
+
 	pm_runtime_enable(&pdev->dev);
 
 	return 0;
@@ -54,7 +56,7 @@ err0:
 	return ret;
 }
 
-static int __devexit omap_ocp2scp_remove(struct platform_device *pdev)
+static int omap_ocp2scp_remove(struct platform_device *pdev)
 {
 	pm_runtime_disable(&pdev->dev);
 	device_for_each_child(&pdev->dev, NULL, ocp2scp_remove_devices);
@@ -72,7 +74,7 @@ MODULE_DEVICE_TABLE(of, omap_ocp2scp_id_table);
 
 static struct platform_driver omap_ocp2scp_driver = {
 	.probe		= omap_ocp2scp_probe,
-	.remove		= __devexit_p(omap_ocp2scp_remove),
+	.remove		= omap_ocp2scp_remove,
 	.driver		= {
 		.name	= "omap-ocp2scp",
 		.owner	= THIS_MODULE,

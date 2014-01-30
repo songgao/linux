@@ -63,8 +63,8 @@ nv04_software_flip(struct nouveau_object *object, u32 mthd,
 
 static struct nouveau_omthds
 nv04_software_omthds[] = {
-	{ 0x0150, nv04_software_set_ref },
-	{ 0x0500, nv04_software_flip },
+	{ 0x0150, 0x0150, nv04_software_set_ref },
+	{ 0x0500, 0x0500, nv04_software_flip },
 	{}
 };
 
@@ -135,8 +135,8 @@ nv04_software_ctor(struct nouveau_object *parent, struct nouveau_object *engine,
 	return 0;
 }
 
-struct nouveau_oclass
-nv04_software_oclass = {
+struct nouveau_oclass *
+nv04_software_oclass = &(struct nouveau_oclass) {
 	.handle = NV_ENGINE(SW, 0x04),
 	.ofuncs = &(struct nouveau_ofuncs) {
 		.ctor = nv04_software_ctor,

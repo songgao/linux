@@ -27,15 +27,18 @@ static char *tpm_device_name = "TPM";
 static acpi_status ppi_callback(acpi_handle handle, u32 level, void *context,
 				void **return_value)
 {
-	acpi_status status;
+	acpi_status status = AE_OK;
 	struct acpi_buffer buffer = { ACPI_ALLOCATE_BUFFER, NULL };
-	status = acpi_get_name(handle, ACPI_FULL_PATHNAME, &buffer);
-	if (strstr(buffer.pointer, context) != NULL) {
-		*return_value = handle;
+
+	if (ACPI_SUCCESS(acpi_get_name(handle, ACPI_FULL_PATHNAME, &buffer))) {
+		if (strstr(buffer.pointer, context) != NULL) {
+			*return_value = handle;
+			status = AE_CTRL_TERMINATE;
+		}
 		kfree(buffer.pointer);
-		return AE_CTRL_TERMINATE;
 	}
-	return AE_OK;
+
+	return status;
 }
 
 static inline void ppi_assign_params(union acpi_object params[4],
@@ -158,9 +161,9 @@ static ssize_t tpm_store_ppi_request(struct device *dev,
 					    ACPI_TYPE_STRING);
 	if (ACPI_FAILURE(status))
 		return -ENOMEM;
-	strncpy(version,
+	strlcpy(version,
 		((union acpi_object *)output.pointer)->string.pointer,
-		PPI_VERSION_LEN);
+		PPI_VERSION_LEN + 1);
 	kfree(output.pointer);
 	output.length = ACPI_ALLOCATE_BUFFER;
 	output.pointer = NULL;
@@ -237,9 +240,9 @@ static ssize_t tpm_show_ppi_transition_action(struct device *dev,
 					    ACPI_TYPE_STRING);
 	if (ACPI_FAILURE(status))
 		return -ENOMEM;
-	strncpy(version,
+	strlcpy(version,
 		((union acpi_object *)output.pointer)->string.pointer,
-		PPI_VERSION_LEN);
+		PPI_VERSION_LEN + 1);
 	/*
 	 * PPI spec defines params[3].type as empty package, but some platforms
 	 * (e.g. Capella with PPI 1.0) need integer/string/buffer type, so for
@@ -351,7 +354,7 @@ cleanup:
 static ssize_t show_ppi_operations(char *buf, u32 start, u32 end)
 {
 	char *str = buf;
-	char version[PPI_VERSION_LEN];
+	char version[PPI_VERSION_LEN + 1];
 	acpi_handle handle;
 	acpi_status status;
 	struct acpi_object_list input;
@@ -381,9 +384,9 @@ static ssize_t show_ppi_operations(char *buf, u32 start, u32 end)
 	if (ACPI_FAILURE(status))
 		return -ENOMEM;
 
-	strncpy(version,
+	strlcpy(version,
 		((union acpi_object *)output.pointer)->string.pointer,
-		PPI_VERSION_LEN);
+		PPI_VERSION_LEN + 1);
 	kfree(output.pointer);
 	output.length = ACPI_ALLOCATE_BUFFER;
 	output.pointer = NULL;
@@ -452,12 +455,8 @@ int tpm_add_ppi(struct kobject *parent)
 {
 	return sysfs_create_group(parent, &ppi_attr_grp);
 }
-EXPORT_SYMBOL_GPL(tpm_add_ppi);
 
 void tpm_remove_ppi(struct kobject *parent)
 {
 	sysfs_remove_group(parent, &ppi_attr_grp);
 }
-EXPORT_SYMBOL_GPL(tpm_remove_ppi);
-
-MODULE_LICENSE("GPL");

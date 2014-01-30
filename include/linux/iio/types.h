@@ -28,6 +28,7 @@ enum iio_chan_type {
 	IIO_CAPACITANCE,
 	IIO_ALTVOLTAGE,
 	IIO_CCT,
+	IIO_PRESSURE,
 };
 
 enum iio_modifier {
@@ -53,10 +54,31 @@ enum iio_modifier {
 	IIO_MOD_LIGHT_BLUE,
 };
 
+enum iio_event_type {
+	IIO_EV_TYPE_THRESH,
+	IIO_EV_TYPE_MAG,
+	IIO_EV_TYPE_ROC,
+	IIO_EV_TYPE_THRESH_ADAPTIVE,
+	IIO_EV_TYPE_MAG_ADAPTIVE,
+};
+
+enum iio_event_info {
+	IIO_EV_INFO_ENABLE,
+	IIO_EV_INFO_VALUE,
+	IIO_EV_INFO_HYSTERESIS,
+};
+
+enum iio_event_direction {
+	IIO_EV_DIR_EITHER,
+	IIO_EV_DIR_RISING,
+	IIO_EV_DIR_FALLING,
+};
+
 #define IIO_VAL_INT 1
 #define IIO_VAL_INT_PLUS_MICRO 2
 #define IIO_VAL_INT_PLUS_NANO 3
 #define IIO_VAL_INT_PLUS_MICRO_DB 4
 #define IIO_VAL_FRACTIONAL 10
+#define IIO_VAL_FRACTIONAL_LOG2 11
 
 #endif /* _IIO_TYPES_H_ */

@@ -48,7 +48,7 @@ static int mdio_mux_mmioreg_switch_fn(int current_child, int desired_child,
 	struct mdio_mux_mmioreg_state *s = data;
 
 	if (current_child ^ desired_child) {
-		void *p = ioremap(s->phys, 1);
+		void __iomem *p = ioremap(s->phys, 1);
 		uint8_t x, y;
 
 		if (!p)
@@ -67,7 +67,7 @@ static int mdio_mux_mmioreg_switch_fn(int current_child, int desired_child,
 	return 0;
 }
 
-static int __devinit mdio_mux_mmioreg_probe(struct platform_device *pdev)
+static int mdio_mux_mmioreg_probe(struct platform_device *pdev)
 {
 	struct device_node *np2, *np = pdev->dev.of_node;
 	struct mdio_mux_mmioreg_state *s;
@@ -137,7 +137,7 @@ static int __devinit mdio_mux_mmioreg_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static int __devexit mdio_mux_mmioreg_remove(struct platform_device *pdev)
+static int mdio_mux_mmioreg_remove(struct platform_device *pdev)
 {
 	struct mdio_mux_mmioreg_state *s = dev_get_platdata(&pdev->dev);
 
@@ -161,7 +161,7 @@ static struct platform_driver mdio_mux_mmioreg_driver = {
 		.of_match_table = mdio_mux_mmioreg_match,
 	},
 	.probe		= mdio_mux_mmioreg_probe,
-	.remove		= __devexit_p(mdio_mux_mmioreg_remove),
+	.remove		= mdio_mux_mmioreg_remove,
 };
 
 module_platform_driver(mdio_mux_mmioreg_driver);

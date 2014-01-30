@@ -12,27 +12,27 @@ static unsigned int BcmGetFlashSectorSize(struct bcm_mini_adapter *Adapter, unsi
 static VOID BcmValidateNvmType(struct bcm_mini_adapter *Adapter);
 static int BcmGetNvmSize(struct bcm_mini_adapter *Adapter);
 static unsigned int BcmGetFlashSize(struct bcm_mini_adapter *Adapter);
-static NVM_TYPE BcmGetNvmType(struct bcm_mini_adapter *Adapter);
+static enum bcm_nvm_type BcmGetNvmType(struct bcm_mini_adapter *Adapter);
 
-static int BcmGetSectionValEndOffset(struct bcm_mini_adapter *Adapter, FLASH2X_SECTION_VAL eFlash2xSectionVal);
+static int BcmGetSectionValEndOffset(struct bcm_mini_adapter *Adapter, enum bcm_flash2x_section_val eFlash2xSectionVal);
 
 static B_UINT8 IsOffsetWritable(struct bcm_mini_adapter *Adapter, unsigned int uiOffset);
-static int IsSectionWritable(struct bcm_mini_adapter *Adapter, FLASH2X_SECTION_VAL Section);
-static int IsSectionExistInVendorInfo(struct bcm_mini_adapter *Adapter, FLASH2X_SECTION_VAL section);
+static int IsSectionWritable(struct bcm_mini_adapter *Adapter, enum bcm_flash2x_section_val Section);
+static int IsSectionExistInVendorInfo(struct bcm_mini_adapter *Adapter, enum bcm_flash2x_section_val section);
 
-static int ReadDSDPriority(struct bcm_mini_adapter *Adapter, FLASH2X_SECTION_VAL dsd);
-static int ReadDSDSignature(struct bcm_mini_adapter *Adapter, FLASH2X_SECTION_VAL dsd);
-static int ReadISOPriority(struct bcm_mini_adapter *Adapter, FLASH2X_SECTION_VAL iso);
-static int ReadISOSignature(struct bcm_mini_adapter *Adapter, FLASH2X_SECTION_VAL iso);
+static int ReadDSDPriority(struct bcm_mini_adapter *Adapter, enum bcm_flash2x_section_val dsd);
+static int ReadDSDSignature(struct bcm_mini_adapter *Adapter, enum bcm_flash2x_section_val dsd);
+static int ReadISOPriority(struct bcm_mini_adapter *Adapter, enum bcm_flash2x_section_val iso);
+static int ReadISOSignature(struct bcm_mini_adapter *Adapter, enum bcm_flash2x_section_val iso);
 
-static int CorruptDSDSig(struct bcm_mini_adapter *Adapter, FLASH2X_SECTION_VAL eFlash2xSectionVal);
-static int CorruptISOSig(struct bcm_mini_adapter *Adapter, FLASH2X_SECTION_VAL eFlash2xSectionVal);
+static int CorruptDSDSig(struct bcm_mini_adapter *Adapter, enum bcm_flash2x_section_val eFlash2xSectionVal);
+static int CorruptISOSig(struct bcm_mini_adapter *Adapter, enum bcm_flash2x_section_val eFlash2xSectionVal);
 static int SaveHeaderIfPresent(struct bcm_mini_adapter *Adapter, PUCHAR pBuff, unsigned int uiSectAlignAddr);
 static int WriteToFlashWithoutSectorErase(struct bcm_mini_adapter *Adapter, PUINT pBuff,
-					FLASH2X_SECTION_VAL eFlash2xSectionVal,
+					enum bcm_flash2x_section_val eFlash2xSectionVal,
 					unsigned int uiOffset, unsigned int uiNumBytes);
-static FLASH2X_SECTION_VAL getHighestPriDSD(struct bcm_mini_adapter *Adapter);
-static FLASH2X_SECTION_VAL getHighestPriISO(struct bcm_mini_adapter *Adapter);
+static enum bcm_flash2x_section_val getHighestPriDSD(struct bcm_mini_adapter *Adapter);
+static enum bcm_flash2x_section_val getHighestPriISO(struct bcm_mini_adapter *Adapter);
 
 static int BeceemFlashBulkRead(
 	struct bcm_mini_adapter *Adapter,
@@ -45,7 +45,7 @@ static int BeceemFlashBulkWrite(
 	PUINT pBuffer,
 	unsigned int uiOffset,
 	unsigned int uiNumBytes,
-	BOOLEAN bVerify);
+	bool bVerify);
 
 static int GetFlashBaseAddr(struct bcm_mini_adapter *Adapter);
 
@@ -103,7 +103,7 @@ static UCHAR ReadEEPROMStatusRegister(struct bcm_mini_adapter *Adapter)
 		}
 		if (!(dwRetries%RETRIES_PER_DELAY))
 			udelay(1000);
-		uiStatus = 0 ;
+		uiStatus = 0;
 	}
 	return uiData;
 } /* ReadEEPROMStatusRegister */
@@ -472,7 +472,7 @@ static int BeceemFlashBulkRead(struct bcm_mini_adapter *Adapter,
 static unsigned int BcmGetFlashSize(struct bcm_mini_adapter *Adapter)
 {
 	if (IsFlash2x(Adapter))
-		return Adapter->psFlash2xCSInfo->OffsetFromDSDStartForDSDHeader + sizeof(DSD_HEADER);
+		return Adapter->psFlash2xCSInfo->OffsetFromDSDStartForDSDHeader + sizeof(struct bcm_dsd_header);
 	else
 		return 32 * 1024;
 }
@@ -1034,7 +1034,7 @@ static int BeceemFlashBulkWrite(struct bcm_mini_adapter *Adapter,
 				PUINT pBuffer,
 				unsigned int uiOffset,
 				unsigned int uiNumBytes,
-				BOOLEAN bVerify)
+				bool bVerify)
 {
 	PCHAR pTempBuff			= NULL;
 	PUCHAR pcBuffer			= (PUCHAR)pBuffer;
@@ -1084,18 +1084,18 @@ static int BeceemFlashBulkWrite(struct bcm_mini_adapter *Adapter,
 	 * for DSD calibration, allow it without checking of sector permission
 	 */
 
-	if (IsFlash2x(Adapter) && (Adapter->bAllDSDWriteAllow == FALSE)) {
+	if (IsFlash2x(Adapter) && (Adapter->bAllDSDWriteAllow == false)) {
 		index = 0;
 		uiTemp = uiNumSectTobeRead;
 		while (uiTemp) {
-			if (IsOffsetWritable(Adapter, uiOffsetFromSectStart + index * Adapter->uiSectorSize) == FALSE) {
+			if (IsOffsetWritable(Adapter, uiOffsetFromSectStart + index * Adapter->uiSectorSize) == false) {
 				BCM_DEBUG_PRINT(Adapter, DBG_TYPE_PRINTK, 0, 0, "Sector Starting at offset <0X%X> is not writable",
 						(uiOffsetFromSectStart + index * Adapter->uiSectorSize));
 				Status = SECTOR_IS_NOT_WRITABLE;
 				goto BeceemFlashBulkWrite_EXIT;
 			}
 			uiTemp = uiTemp - 1;
-			index = index + 1 ;
+			index = index + 1;
 		}
 	}
 	Adapter->SelectedChip = RESET_CHIP_SELECT;
@@ -1222,7 +1222,7 @@ static int BeceemFlashBulkWriteStatus(struct bcm_mini_adapter *Adapter,
 				PUINT pBuffer,
 				unsigned int uiOffset,
 				unsigned int uiNumBytes,
-				BOOLEAN bVerify)
+				bool bVerify)
 {
 	PCHAR pTempBuff			= NULL;
 	PUCHAR pcBuffer			= (PUCHAR)pBuffer;
@@ -1265,18 +1265,18 @@ static int BeceemFlashBulkWriteStatus(struct bcm_mini_adapter *Adapter,
 			uiNumSectTobeRead++;
 	}
 
-	if (IsFlash2x(Adapter) && (Adapter->bAllDSDWriteAllow == FALSE)) {
+	if (IsFlash2x(Adapter) && (Adapter->bAllDSDWriteAllow == false)) {
 		index = 0;
 		uiTemp = uiNumSectTobeRead;
 		while (uiTemp) {
-			if (IsOffsetWritable(Adapter, uiOffsetFromSectStart + index * Adapter->uiSectorSize) == FALSE) {
+			if (IsOffsetWritable(Adapter, uiOffsetFromSectStart + index * Adapter->uiSectorSize) == false) {
 				BCM_DEBUG_PRINT(Adapter, DBG_TYPE_PRINTK, 0, 0, "Sector Starting at offset <0X%x> is not writable",
 						(uiOffsetFromSectStart + index * Adapter->uiSectorSize));
 				Status = SECTOR_IS_NOT_WRITABLE;
 				goto BeceemFlashBulkWriteStatus_EXIT;
 			}
 			uiTemp = uiTemp - 1;
-			index = index + 1 ;
+			index = index + 1;
 		}
 	}
 
@@ -1525,7 +1525,7 @@ static int BeceemEEPROMReadBackandVerify(struct bcm_mini_adapter *Adapter,
 
 			if (memcmp(&pBuffer[uiIndex], &auiData[0], MAX_RW_SIZE)) {
 				/* re-write */
-				BeceemEEPROMBulkWrite(Adapter, (PUCHAR)(pBuffer + uiIndex), uiOffset, MAX_RW_SIZE, FALSE);
+				BeceemEEPROMBulkWrite(Adapter, (PUCHAR)(pBuffer + uiIndex), uiOffset, MAX_RW_SIZE, false);
 				mdelay(3);
 				BeceemEEPROMBulkRead(Adapter, &auiData[0], uiOffset, MAX_RW_SIZE);
 
@@ -1539,7 +1539,7 @@ static int BeceemEEPROMReadBackandVerify(struct bcm_mini_adapter *Adapter,
 			BeceemEEPROMBulkRead(Adapter, &uiData, uiOffset, 4);
 			if (uiData != pBuffer[uiIndex]) {
 				/* re-write */
-				BeceemEEPROMBulkWrite(Adapter, (PUCHAR)(pBuffer + uiIndex), uiOffset, 4, FALSE);
+				BeceemEEPROMBulkWrite(Adapter, (PUCHAR)(pBuffer + uiIndex), uiOffset, 4, false);
 				mdelay(3);
 				BeceemEEPROMBulkRead(Adapter, &uiData, uiOffset, 4);
 				if (uiData != pBuffer[uiIndex])
@@ -1724,7 +1724,7 @@ int BeceemEEPROMBulkWrite(struct bcm_mini_adapter *Adapter,
 			PUCHAR pBuffer,
 			unsigned int uiOffset,
 			unsigned int uiNumBytes,
-			BOOLEAN bVerify)
+			bool bVerify)
 {
 	unsigned int uiBytesToCopy	= uiNumBytes;
 	/* unsigned int uiRdbk		= 0; */
@@ -1819,7 +1819,7 @@ int BeceemNVMRead(struct bcm_mini_adapter *Adapter,
 	#endif
 
 	if (Adapter->eNVMType == NVM_FLASH) {
-		if (Adapter->bFlashRawRead == FALSE) {
+		if (Adapter->bFlashRawRead == false) {
 			if (IsSectionExistInVendorInfo(Adapter, Adapter->eActiveDSD))
 				return vendorextnReadSection(Adapter, (PUCHAR)pBuffer, Adapter->eActiveDSD, uiOffset, uiNumBytes);
 
@@ -1870,7 +1870,7 @@ int BeceemNVMWrite(struct bcm_mini_adapter *Adapter,
 		PUINT pBuffer,
 		unsigned int uiOffset,
 		unsigned int uiNumBytes,
-		BOOLEAN bVerify)
+		bool bVerify)
 {
 	int Status = 0;
 	unsigned int uiTemp = 0;
@@ -1978,7 +1978,7 @@ int BeceemNVMWrite(struct bcm_mini_adapter *Adapter,
 int BcmUpdateSectorSize(struct bcm_mini_adapter *Adapter, unsigned int uiSectorSize)
 {
 	int Status = -1;
-	FLASH_CS_INFO sFlashCsInfo = {0};
+	struct bcm_flash_cs_info sFlashCsInfo = {0};
 	unsigned int uiTemp = 0;
 	unsigned int uiSectorSig = 0;
 	unsigned int uiCurrentSectorSize = 0;
@@ -2228,20 +2228,20 @@ int BcmAllocFlashCSStructure(struct bcm_mini_adapter *psAdapter)
 		BCM_DEBUG_PRINT(psAdapter, DBG_TYPE_PRINTK, 0, 0, "Adapter structure point is NULL");
 		return -EINVAL;
 	}
-	psAdapter->psFlashCSInfo = (PFLASH_CS_INFO)kzalloc(sizeof(FLASH_CS_INFO), GFP_KERNEL);
+	psAdapter->psFlashCSInfo = kzalloc(sizeof(struct bcm_flash_cs_info), GFP_KERNEL);
 	if (psAdapter->psFlashCSInfo == NULL) {
 		BCM_DEBUG_PRINT(psAdapter, DBG_TYPE_PRINTK, 0, 0, "Can't Allocate memory for Flash 1.x");
 		return -ENOMEM;
 	}
 
-	psAdapter->psFlash2xCSInfo = (PFLASH2X_CS_INFO)kzalloc(sizeof(FLASH2X_CS_INFO), GFP_KERNEL);
+	psAdapter->psFlash2xCSInfo = kzalloc(sizeof(struct bcm_flash2x_cs_info), GFP_KERNEL);
 	if (!psAdapter->psFlash2xCSInfo) {
 		BCM_DEBUG_PRINT(psAdapter, DBG_TYPE_PRINTK, 0, 0, "Can't Allocate memory for Flash 2.x");
 		kfree(psAdapter->psFlashCSInfo);
 		return -ENOMEM;
 	}
 
-	psAdapter->psFlash2xVendorInfo = (PFLASH2X_VENDORSPECIFIC_INFO)kzalloc(sizeof(FLASH2X_VENDORSPECIFIC_INFO), GFP_KERNEL);
+	psAdapter->psFlash2xVendorInfo = kzalloc(sizeof(struct bcm_flash2x_vendor_info), GFP_KERNEL);
 	if (!psAdapter->psFlash2xVendorInfo) {
 		BCM_DEBUG_PRINT(psAdapter, DBG_TYPE_PRINTK, 0, 0, "Can't Allocate Vendor Info Memory for Flash 2.x");
 		kfree(psAdapter->psFlashCSInfo);
@@ -2264,7 +2264,7 @@ int BcmDeAllocFlashCSStructure(struct bcm_mini_adapter *psAdapter)
 	return STATUS_SUCCESS;
 }
 
-static int BcmDumpFlash2XCSStructure(PFLASH2X_CS_INFO psFlash2xCSInfo, struct bcm_mini_adapter *Adapter)
+static int BcmDumpFlash2XCSStructure(struct bcm_flash2x_cs_info *psFlash2xCSInfo, struct bcm_mini_adapter *Adapter)
 {
 	unsigned int Index = 0;
 
@@ -2324,7 +2324,7 @@ static int BcmDumpFlash2XCSStructure(PFLASH2X_CS_INFO psFlash2xCSInfo, struct bc
 	return STATUS_SUCCESS;
 }
 
-static int ConvertEndianOf2XCSStructure(PFLASH2X_CS_INFO psFlash2xCSInfo)
+static int ConvertEndianOf2XCSStructure(struct bcm_flash2x_cs_info *psFlash2xCSInfo)
 {
 	unsigned int Index = 0;
 
@@ -2381,7 +2381,7 @@ static int ConvertEndianOf2XCSStructure(PFLASH2X_CS_INFO psFlash2xCSInfo)
 	return STATUS_SUCCESS;
 }
 
-static int ConvertEndianOfCSStructure(PFLASH_CS_INFO psFlashCSInfo)
+static int ConvertEndianOfCSStructure(struct bcm_flash_cs_info *psFlashCSInfo)
 {
 	/* unsigned int Index = 0; */
 	psFlashCSInfo->MagicNumber				= ntohl(psFlashCSInfo->MagicNumber);
@@ -2413,7 +2413,7 @@ static int ConvertEndianOfCSStructure(PFLASH_CS_INFO psFlashCSInfo)
 	return STATUS_SUCCESS;
 }
 
-static int IsSectionExistInVendorInfo(struct bcm_mini_adapter *Adapter, FLASH2X_SECTION_VAL section)
+static int IsSectionExistInVendorInfo(struct bcm_mini_adapter *Adapter, enum bcm_flash2x_section_val section)
 {
 	return (Adapter->uiVendorExtnFlag &&
 		(Adapter->psFlash2xVendorInfo->VendorSection[section].AccessFlags & FLASH2X_SECTION_PRESENT) &&
@@ -2425,7 +2425,7 @@ static VOID UpdateVendorInfo(struct bcm_mini_adapter *Adapter)
 	B_UINT32 i = 0;
 	unsigned int uiSizeSection = 0;
 
-	Adapter->uiVendorExtnFlag = FALSE;
+	Adapter->uiVendorExtnFlag = false;
 
 	for (i = 0; i < TOTAL_SECTIONS; i++)
 		Adapter->psFlash2xVendorInfo->VendorSection[i].OffsetFromZeroForSectionStart = UNINIT_PTR_IN_CS;
@@ -2446,7 +2446,7 @@ static VOID UpdateVendorInfo(struct bcm_mini_adapter *Adapter)
 
 		switch (i) {
 		case DSD0:
-			if ((uiSizeSection >= (Adapter->psFlash2xCSInfo->OffsetFromDSDStartForDSDHeader + sizeof(DSD_HEADER))) &&
+			if ((uiSizeSection >= (Adapter->psFlash2xCSInfo->OffsetFromDSDStartForDSDHeader + sizeof(struct bcm_dsd_header))) &&
 				(UNINIT_PTR_IN_CS != Adapter->psFlash2xVendorInfo->VendorSection[i].OffsetFromZeroForSectionStart))
 				Adapter->psFlash2xCSInfo->OffsetFromZeroForDSDStart = Adapter->psFlash2xCSInfo->OffsetFromZeroForDSDEnd = VENDOR_PTR_IN_CS;
 			else
@@ -2454,7 +2454,7 @@ static VOID UpdateVendorInfo(struct bcm_mini_adapter *Adapter)
 			break;
 
 		case DSD1:
-			if ((uiSizeSection >= (Adapter->psFlash2xCSInfo->OffsetFromDSDStartForDSDHeader + sizeof(DSD_HEADER))) &&
+			if ((uiSizeSection >= (Adapter->psFlash2xCSInfo->OffsetFromDSDStartForDSDHeader + sizeof(struct bcm_dsd_header))) &&
 				(UNINIT_PTR_IN_CS != Adapter->psFlash2xVendorInfo->VendorSection[i].OffsetFromZeroForSectionStart))
 				Adapter->psFlash2xCSInfo->OffsetFromZeroForDSD1Start = Adapter->psFlash2xCSInfo->OffsetFromZeroForDSD1End = VENDOR_PTR_IN_CS;
 			else
@@ -2462,7 +2462,7 @@ static VOID UpdateVendorInfo(struct bcm_mini_adapter *Adapter)
 			break;
 
 		case DSD2:
-			if ((uiSizeSection >= (Adapter->psFlash2xCSInfo->OffsetFromDSDStartForDSDHeader + sizeof(DSD_HEADER))) &&
+			if ((uiSizeSection >= (Adapter->psFlash2xCSInfo->OffsetFromDSDStartForDSDHeader + sizeof(struct bcm_dsd_header))) &&
 				(UNINIT_PTR_IN_CS != Adapter->psFlash2xVendorInfo->VendorSection[i].OffsetFromZeroForSectionStart))
 				Adapter->psFlash2xCSInfo->OffsetFromZeroForDSD2Start = Adapter->psFlash2xCSInfo->OffsetFromZeroForDSD2End = VENDOR_PTR_IN_CS;
 			else
@@ -2509,7 +2509,7 @@ static VOID UpdateVendorInfo(struct bcm_mini_adapter *Adapter)
 
 static int BcmGetFlashCSInfo(struct bcm_mini_adapter *Adapter)
 {
-	/* FLASH_CS_INFO sFlashCsInfo = {0}; */
+	/* struct bcm_flash_cs_info sFlashCsInfo = {0}; */
 
 	#if !defined(BCM_SHM_INTERFACE) || defined(FLASH_DIRECT_ACCESS)
 		unsigned int value;
@@ -2522,8 +2522,8 @@ static int BcmGetFlashCSInfo(struct bcm_mini_adapter *Adapter)
 
 	Adapter->uiFlashBaseAdd = 0;
 	Adapter->ulFlashCalStart = 0;
-	memset(Adapter->psFlashCSInfo, 0 , sizeof(FLASH_CS_INFO));
-	memset(Adapter->psFlash2xCSInfo, 0 , sizeof(FLASH2X_CS_INFO));
+	memset(Adapter->psFlashCSInfo, 0 , sizeof(struct bcm_flash_cs_info));
+	memset(Adapter->psFlash2xCSInfo, 0 , sizeof(struct bcm_flash2x_cs_info));
 
 	if (!Adapter->bDDRInitDone) {
 		value = FLASH_CONTIGIOUS_START_ADDR_BEFORE_INIT;
@@ -2551,7 +2551,7 @@ static int BcmGetFlashCSInfo(struct bcm_mini_adapter *Adapter)
 	BCM_DEBUG_PRINT(Adapter, DBG_TYPE_OTHERS, NVM_RW, DBG_LVL_ALL, "FLASH LAYOUT MAJOR VERSION :%X", uiFlashLayoutMajorVersion);
 
 	if (uiFlashLayoutMajorVersion < FLASH_2X_MAJOR_NUMBER) {
-		BeceemFlashBulkRead(Adapter, (PUINT)Adapter->psFlashCSInfo, Adapter->ulFlashControlSectionStart, sizeof(FLASH_CS_INFO));
+		BeceemFlashBulkRead(Adapter, (PUINT)Adapter->psFlashCSInfo, Adapter->ulFlashControlSectionStart, sizeof(struct bcm_flash_cs_info));
 		ConvertEndianOfCSStructure(Adapter->psFlashCSInfo);
 		Adapter->ulFlashCalStart = (Adapter->psFlashCSInfo->OffsetFromZeroForCalibrationStart);
 
@@ -2576,7 +2576,7 @@ static int BcmGetFlashCSInfo(struct bcm_mini_adapter *Adapter)
 		Adapter->uiFlashBaseAdd = Adapter->psFlashCSInfo->FlashBaseAddr & 0xFCFFFFFF;
 	} else {
 		if (BcmFlash2xBulkRead(Adapter, (PUINT)Adapter->psFlash2xCSInfo, NO_SECTION_VAL,
-					Adapter->ulFlashControlSectionStart, sizeof(FLASH2X_CS_INFO))) {
+					Adapter->ulFlashControlSectionStart, sizeof(struct bcm_flash2x_cs_info))) {
 			BCM_DEBUG_PRINT(Adapter, DBG_TYPE_PRINTK, 0, 0, "Unable to read CS structure\n");
 			return STATUS_FAILURE;
 		}
@@ -2629,7 +2629,7 @@ static int BcmGetFlashCSInfo(struct bcm_mini_adapter *Adapter)
  *
  */
 
-static NVM_TYPE BcmGetNvmType(struct bcm_mini_adapter *Adapter)
+static enum bcm_nvm_type BcmGetNvmType(struct bcm_mini_adapter *Adapter)
 {
 	unsigned int uiData = 0;
 
@@ -2660,14 +2660,14 @@ static NVM_TYPE BcmGetNvmType(struct bcm_mini_adapter *Adapter)
 /*
  * BcmGetSectionValStartOffset - this will calculate the section's starting offset if section val is given
  * @Adapter : Drivers Private Data structure
- * @eFlashSectionVal : Flash secion value defined in enum FLASH2X_SECTION_VAL
+ * @eFlashSectionVal : Flash secion value defined in enum bcm_flash2x_section_val
  *
  * Return value:-
  * On success it return the start offset of the provided section val
  * On Failure -returns STATUS_FAILURE
  */
 
-int BcmGetSectionValStartOffset(struct bcm_mini_adapter *Adapter, FLASH2X_SECTION_VAL eFlashSectionVal)
+int BcmGetSectionValStartOffset(struct bcm_mini_adapter *Adapter, enum bcm_flash2x_section_val eFlashSectionVal)
 {
 	/*
 	 * Considering all the section for which end offset can be calculated or directly given
@@ -2685,12 +2685,12 @@ int BcmGetSectionValStartOffset(struct bcm_mini_adapter *Adapter, FLASH2X_SECTIO
 	switch (eFlashSectionVal) {
 	case ISO_IMAGE1:
 		if ((Adapter->psFlash2xCSInfo->OffsetISOImage1Part1Start != UNINIT_PTR_IN_CS) &&
-			(IsNonCDLessDevice(Adapter) == FALSE))
+			(IsNonCDLessDevice(Adapter) == false))
 			SectStartOffset = (Adapter->psFlash2xCSInfo->OffsetISOImage1Part1Start);
 		break;
 	case ISO_IMAGE2:
 		if ((Adapter->psFlash2xCSInfo->OffsetISOImage2Part1Start != UNINIT_PTR_IN_CS) &&
-			(IsNonCDLessDevice(Adapter) == FALSE))
+			(IsNonCDLessDevice(Adapter) == false))
 			SectStartOffset = (Adapter->psFlash2xCSInfo->OffsetISOImage2Part1Start);
 		break;
 	case DSD0:
@@ -2752,14 +2752,14 @@ int BcmGetSectionValStartOffset(struct bcm_mini_adapter *Adapter, FLASH2X_SECTIO
 /*
  * BcmGetSectionValEndOffset - this will calculate the section's Ending offset if section val is given
  * @Adapter : Drivers Private Data structure
- * @eFlashSectionVal : Flash secion value defined in enum FLASH2X_SECTION_VAL
+ * @eFlashSectionVal : Flash secion value defined in enum bcm_flash2x_section_val
  *
  * Return value:-
  * On success it return the end offset of the provided section val
  * On Failure -returns STATUS_FAILURE
  */
 
-int BcmGetSectionValEndOffset(struct bcm_mini_adapter *Adapter, FLASH2X_SECTION_VAL eFlash2xSectionVal)
+int BcmGetSectionValEndOffset(struct bcm_mini_adapter *Adapter, enum bcm_flash2x_section_val eFlash2xSectionVal)
 {
 	int SectEndOffset = 0;
 
@@ -2770,12 +2770,12 @@ int BcmGetSectionValEndOffset(struct bcm_mini_adapter *Adapter, FLASH2X_SECTION_
 	switch (eFlash2xSectionVal) {
 	case ISO_IMAGE1:
 		if ((Adapter->psFlash2xCSInfo->OffsetISOImage1Part1End != UNINIT_PTR_IN_CS) &&
-			(IsNonCDLessDevice(Adapter) == FALSE))
+			(IsNonCDLessDevice(Adapter) == false))
 			SectEndOffset = (Adapter->psFlash2xCSInfo->OffsetISOImage1Part1End);
 		break;
 	case ISO_IMAGE2:
 		if ((Adapter->psFlash2xCSInfo->OffsetISOImage2Part1End != UNINIT_PTR_IN_CS) &&
-			(IsNonCDLessDevice(Adapter) == FALSE))
+			(IsNonCDLessDevice(Adapter) == false))
 			SectEndOffset = (Adapter->psFlash2xCSInfo->OffsetISOImage2Part1End);
 		break;
 	case DSD0:
@@ -2810,6 +2810,7 @@ int BcmGetSectionValEndOffset(struct bcm_mini_adapter *Adapter, FLASH2X_SECTION_
 	case CONTROL_SECTION:
 		/* Not Clear So Putting failure. confirm and fix it. */
 		SectEndOffset = STATUS_FAILURE;
+		break;
 	case ISO_IMAGE1_PART2:
 		if (Adapter->psFlash2xCSInfo->OffsetISOImage1Part2End != UNINIT_PTR_IN_CS)
 			SectEndOffset = (Adapter->psFlash2xCSInfo->OffsetISOImage1Part2End);
@@ -2830,14 +2831,14 @@ int BcmGetSectionValEndOffset(struct bcm_mini_adapter *Adapter, FLASH2X_SECTION_
 		SectEndOffset = INVALID_OFFSET;
 	}
 
-	return SectEndOffset ;
+	return SectEndOffset;
 }
 
 /*
  * BcmFlash2xBulkRead:- Read API for Flash Map 2.x .
  * @Adapter :Driver Private Data Structure
  * @pBuffer : Buffer where data has to be put after reading
- * @eFlashSectionVal :Flash Section Val defined in FLASH2X_SECTION_VAL
+ * @eFlashSectionVal :Flash Section Val defined in enum bcm_flash2x_section_val
  * @uiOffsetWithinSectionVal :- Offset with in provided section
  * @uiNumBytes : Number of Bytes for Read
  *
@@ -2847,7 +2848,7 @@ int BcmGetSectionValEndOffset(struct bcm_mini_adapter *Adapter, FLASH2X_SECTION_
 
 int BcmFlash2xBulkRead(struct bcm_mini_adapter *Adapter,
 		PUINT pBuffer,
-		FLASH2X_SECTION_VAL eFlash2xSectionVal,
+		enum bcm_flash2x_section_val eFlash2xSectionVal,
 		unsigned int uiOffsetWithinSectionVal,
 		unsigned int uiNumBytes)
 {
@@ -2898,7 +2899,7 @@ int BcmFlash2xBulkRead(struct bcm_mini_adapter *Adapter,
  * BcmFlash2xBulkWrite :-API for Writing on the Flash Map 2.x.
  * @Adapter :Driver Private Data Structure
  * @pBuffer : Buffer From where data has to taken for writing
- * @eFlashSectionVal :Flash Section Val defined in FLASH2X_SECTION_VAL
+ * @eFlashSectionVal :Flash Section Val defined in enum bcm_flash2x_section_val
  * @uiOffsetWithinSectionVal :- Offset with in provided section
  * @uiNumBytes : Number of Bytes for Write
  *
@@ -2909,7 +2910,7 @@ int BcmFlash2xBulkRead(struct bcm_mini_adapter *Adapter,
 
 int BcmFlash2xBulkWrite(struct bcm_mini_adapter *Adapter,
 			PUINT pBuffer,
-			FLASH2X_SECTION_VAL eFlash2xSectVal,
+			enum bcm_flash2x_section_val eFlash2xSectVal,
 			unsigned int uiOffset,
 			unsigned int uiNumBytes,
 			unsigned int bVerify)
@@ -2965,13 +2966,13 @@ int BcmFlash2xBulkWrite(struct bcm_mini_adapter *Adapter,
  * @Adapter :-Drivers private Data Structure
  *
  * Return Value:-
- * Return STATUS_SUCESS if get success in setting the right DSD else negaive error code
+ * Return STATUS_SUCESS if get success in setting the right DSD else negative error code
  *
  */
 
 static int BcmGetActiveDSD(struct bcm_mini_adapter *Adapter)
 {
-	FLASH2X_SECTION_VAL uiHighestPriDSD = 0;
+	enum bcm_flash2x_section_val uiHighestPriDSD = 0;
 
 	uiHighestPriDSD = getHighestPriDSD(Adapter);
 	Adapter->eActiveDSD = uiHighestPriDSD;
@@ -3036,7 +3037,7 @@ static int BcmGetActiveISO(struct bcm_mini_adapter *Adapter)
  *
  * Return Value:-
  * Success:-TRUE ,  offset is writable
- * Failure:-FALSE, offset is RO
+ * Failure:-false, offset is RO
  *
  */
 
@@ -3061,10 +3062,10 @@ B_UINT8 IsOffsetWritable(struct bcm_mini_adapter *Adapter, unsigned int uiOffset
 	if (permissionBits == SECTOR_READWRITE_PERMISSION)
 		return TRUE;
 	else
-		return FALSE;
+		return false;
 }
 
-static int BcmDumpFlash2xSectionBitMap(PFLASH2X_BITMAP psFlash2xBitMap)
+static int BcmDumpFlash2xSectionBitMap(struct bcm_flash2x_bitmap *psFlash2xBitMap)
 {
 	struct bcm_mini_adapter *Adapter = GET_BCM_ADAPTER(gblpnetdev);
 
@@ -3099,18 +3100,18 @@ static int BcmDumpFlash2xSectionBitMap(PFLASH2X_BITMAP psFlash2xBitMap)
  * Failure:- negative error code
  */
 
-int BcmGetFlash2xSectionalBitMap(struct bcm_mini_adapter *Adapter, PFLASH2X_BITMAP psFlash2xBitMap)
+int BcmGetFlash2xSectionalBitMap(struct bcm_mini_adapter *Adapter, struct bcm_flash2x_bitmap *psFlash2xBitMap)
 {
-	PFLASH2X_CS_INFO psFlash2xCSInfo = Adapter->psFlash2xCSInfo;
-	FLASH2X_SECTION_VAL uiHighestPriDSD = 0;
-	FLASH2X_SECTION_VAL uiHighestPriISO = 0;
-	BOOLEAN SetActiveDSDDone = FALSE;
-	BOOLEAN SetActiveISODone = FALSE;
+	struct bcm_flash2x_cs_info *psFlash2xCSInfo = Adapter->psFlash2xCSInfo;
+	enum bcm_flash2x_section_val uiHighestPriDSD = 0;
+	enum bcm_flash2x_section_val uiHighestPriISO = 0;
+	bool SetActiveDSDDone = false;
+	bool SetActiveISODone = false;
 
 	/* For 1.x map all the section except DSD0 will be shown as not present
 	 * This part will be used by calibration tool to detect the number of DSD present in Flash.
 	 */
-	if (IsFlash2x(Adapter) == FALSE) {
+	if (IsFlash2x(Adapter) == false) {
 		psFlash2xBitMap->ISO_IMAGE2 = 0;
 		psFlash2xBitMap->ISO_IMAGE1 = 0;
 		psFlash2xBitMap->DSD0 = FLASH2X_SECTION_VALID | FLASH2X_SECTION_ACT | FLASH2X_SECTION_PRESENT; /* 0xF; 0000(Reseved)1(Active)0(RW)1(valid)1(present) */
@@ -3142,10 +3143,10 @@ int BcmGetFlash2xSectionalBitMap(struct bcm_mini_adapter *Adapter, PFLASH2X_BITM
 			psFlash2xBitMap->ISO_IMAGE2 |= FLASH2X_SECTION_VALID;
 
 		/* Calculation for extrating the Access permission */
-		if (IsSectionWritable(Adapter, ISO_IMAGE2) == FALSE)
+		if (IsSectionWritable(Adapter, ISO_IMAGE2) == false)
 			psFlash2xBitMap->ISO_IMAGE2 |= FLASH2X_SECTION_RO;
 
-		if (SetActiveISODone == FALSE && uiHighestPriISO == ISO_IMAGE2) {
+		if (SetActiveISODone == false && uiHighestPriISO == ISO_IMAGE2) {
 			psFlash2xBitMap->ISO_IMAGE2 |= FLASH2X_SECTION_ACT;
 			SetActiveISODone = TRUE;
 		}
@@ -3162,10 +3163,10 @@ int BcmGetFlash2xSectionalBitMap(struct bcm_mini_adapter *Adapter, PFLASH2X_BITM
 			psFlash2xBitMap->ISO_IMAGE1 |= FLASH2X_SECTION_VALID;
 
 		/* Calculation for extrating the Access permission */
-		if (IsSectionWritable(Adapter, ISO_IMAGE1) == FALSE)
+		if (IsSectionWritable(Adapter, ISO_IMAGE1) == false)
 			psFlash2xBitMap->ISO_IMAGE1 |= FLASH2X_SECTION_RO;
 
-		if (SetActiveISODone == FALSE && uiHighestPriISO == ISO_IMAGE1) {
+		if (SetActiveISODone == false && uiHighestPriISO == ISO_IMAGE1) {
 			psFlash2xBitMap->ISO_IMAGE1 |= FLASH2X_SECTION_ACT;
 			SetActiveISODone = TRUE;
 		}
@@ -3182,11 +3183,11 @@ int BcmGetFlash2xSectionalBitMap(struct bcm_mini_adapter *Adapter, PFLASH2X_BITM
 			psFlash2xBitMap->DSD2 |= FLASH2X_SECTION_VALID;
 
 		/* Calculation for extrating the Access permission */
-		if (IsSectionWritable(Adapter, DSD2) == FALSE) {
+		if (IsSectionWritable(Adapter, DSD2) == false) {
 			psFlash2xBitMap->DSD2 |= FLASH2X_SECTION_RO;
 		} else {
 			/* Means section is writable */
-			if ((SetActiveDSDDone == FALSE) && (uiHighestPriDSD == DSD2)) {
+			if ((SetActiveDSDDone == false) && (uiHighestPriDSD == DSD2)) {
 				psFlash2xBitMap->DSD2 |= FLASH2X_SECTION_ACT;
 				SetActiveDSDDone = TRUE;
 			}
@@ -3204,11 +3205,11 @@ int BcmGetFlash2xSectionalBitMap(struct bcm_mini_adapter *Adapter, PFLASH2X_BITM
 			psFlash2xBitMap->DSD1 |= FLASH2X_SECTION_VALID;
 
 		/* Calculation for extrating the Access permission */
-		if (IsSectionWritable(Adapter, DSD1) == FALSE) {
+		if (IsSectionWritable(Adapter, DSD1) == false) {
 			psFlash2xBitMap->DSD1 |= FLASH2X_SECTION_RO;
 		} else {
 			/* Means section is writable */
-			if ((SetActiveDSDDone == FALSE) && (uiHighestPriDSD == DSD1)) {
+			if ((SetActiveDSDDone == false) && (uiHighestPriDSD == DSD1)) {
 				psFlash2xBitMap->DSD1 |= FLASH2X_SECTION_ACT;
 				SetActiveDSDDone = TRUE;
 			}
@@ -3226,11 +3227,11 @@ int BcmGetFlash2xSectionalBitMap(struct bcm_mini_adapter *Adapter, PFLASH2X_BITM
 			psFlash2xBitMap->DSD0 |= FLASH2X_SECTION_VALID;
 
 		/* Setting Access permission */
-		if (IsSectionWritable(Adapter, DSD0) == FALSE) {
+		if (IsSectionWritable(Adapter, DSD0) == false) {
 			psFlash2xBitMap->DSD0 |= FLASH2X_SECTION_RO;
 		} else {
 			/* Means section is writable */
-			if ((SetActiveDSDDone == FALSE) && (uiHighestPriDSD == DSD0)) {
+			if ((SetActiveDSDDone == false) && (uiHighestPriDSD == DSD0)) {
 				psFlash2xBitMap->DSD0 |= FLASH2X_SECTION_ACT;
 				SetActiveDSDDone = TRUE;
 			}
@@ -3248,7 +3249,7 @@ int BcmGetFlash2xSectionalBitMap(struct bcm_mini_adapter *Adapter, PFLASH2X_BITM
 		psFlash2xBitMap->VSA0 |= FLASH2X_SECTION_VALID;
 
 		/* Calculation for extrating the Access permission */
-		if (IsSectionWritable(Adapter, VSA0) == FALSE)
+		if (IsSectionWritable(Adapter, VSA0) == false)
 			psFlash2xBitMap->VSA0 |=  FLASH2X_SECTION_RO;
 
 		/* By Default section is Active */
@@ -3266,7 +3267,7 @@ int BcmGetFlash2xSectionalBitMap(struct bcm_mini_adapter *Adapter, PFLASH2X_BITM
 		psFlash2xBitMap->VSA1 |= FLASH2X_SECTION_VALID;
 
 		/* Checking For Access permission */
-		if (IsSectionWritable(Adapter, VSA1) == FALSE)
+		if (IsSectionWritable(Adapter, VSA1) == false)
 			psFlash2xBitMap->VSA1 |= FLASH2X_SECTION_RO;
 
 		/* By Default section is Active */
@@ -3284,7 +3285,7 @@ int BcmGetFlash2xSectionalBitMap(struct bcm_mini_adapter *Adapter, PFLASH2X_BITM
 		psFlash2xBitMap->VSA2 |= FLASH2X_SECTION_VALID;
 
 		/* Checking For Access permission */
-		if (IsSectionWritable(Adapter, VSA2) == FALSE)
+		if (IsSectionWritable(Adapter, VSA2) == false)
 			psFlash2xBitMap->VSA2 |= FLASH2X_SECTION_RO;
 
 		/* By Default section is Active */
@@ -3302,7 +3303,7 @@ int BcmGetFlash2xSectionalBitMap(struct bcm_mini_adapter *Adapter, PFLASH2X_BITM
 		psFlash2xBitMap->SCSI |= FLASH2X_SECTION_VALID;
 
 		/* Checking For Access permission */
-		if (IsSectionWritable(Adapter, SCSI) == FALSE)
+		if (IsSectionWritable(Adapter, SCSI) == false)
 			psFlash2xBitMap->SCSI |= FLASH2X_SECTION_RO;
 
 		/* By Default section is Active */
@@ -3320,7 +3321,7 @@ int BcmGetFlash2xSectionalBitMap(struct bcm_mini_adapter *Adapter, PFLASH2X_BITM
 		psFlash2xBitMap->CONTROL_SECTION |= FLASH2X_SECTION_VALID;
 
 		/* Checking For Access permission */
-		if (IsSectionWritable(Adapter, CONTROL_SECTION) == FALSE)
+		if (IsSectionWritable(Adapter, CONTROL_SECTION) == false)
 			psFlash2xBitMap->CONTROL_SECTION |= FLASH2X_SECTION_RO;
 
 		/* By Default section is Active */
@@ -3349,15 +3350,15 @@ int BcmGetFlash2xSectionalBitMap(struct bcm_mini_adapter *Adapter, PFLASH2X_BITM
  *
  */
 
-int BcmSetActiveSection(struct bcm_mini_adapter *Adapter, FLASH2X_SECTION_VAL eFlash2xSectVal)
+int BcmSetActiveSection(struct bcm_mini_adapter *Adapter, enum bcm_flash2x_section_val eFlash2xSectVal)
 {
 	unsigned int SectImagePriority = 0;
 	int Status = STATUS_SUCCESS;
 
-	/* DSD_HEADER sDSD = {0};
-	 * ISO_HEADER sISO = {0};
+	/* struct bcm_dsd_header sDSD = {0};
+	 * struct bcm_iso_header sISO = {0};
 	 */
-	int HighestPriDSD = 0 ;
+	int HighestPriDSD = 0;
 	int HighestPriISO = 0;
 
 	Status = IsSectionWritable(Adapter, eFlash2xSectVal);
@@ -3391,7 +3392,7 @@ int BcmSetActiveSection(struct bcm_mini_adapter *Adapter, FLASH2X_SECTION_VAL eF
 				Status = BcmFlash2xBulkWrite(Adapter,
 							&SectImagePriority,
 							HighestPriISO,
-							0 + FIELD_OFFSET_IN_HEADER(PISO_HEADER, ISOImagePriority),
+							0 + FIELD_OFFSET_IN_HEADER(struct bcm_iso_header *, ISOImagePriority),
 							SIGNATURE_SIZE,
 							TRUE);
 				if (Status) {
@@ -3416,7 +3417,7 @@ int BcmSetActiveSection(struct bcm_mini_adapter *Adapter, FLASH2X_SECTION_VAL eF
 			Status = BcmFlash2xBulkWrite(Adapter,
 						&SectImagePriority,
 						eFlash2xSectVal,
-						0 + FIELD_OFFSET_IN_HEADER(PISO_HEADER, ISOImagePriority),
+						0 + FIELD_OFFSET_IN_HEADER(struct bcm_iso_header *, ISOImagePriority),
 						SIGNATURE_SIZE,
 						TRUE);
 			if (Status) {
@@ -3452,7 +3453,7 @@ int BcmSetActiveSection(struct bcm_mini_adapter *Adapter, FLASH2X_SECTION_VAL eF
 				Status = BcmFlash2xBulkWrite(Adapter,
 							&SectImagePriority,
 							HighestPriDSD,
-							Adapter->psFlash2xCSInfo->OffsetFromDSDStartForDSDHeader + FIELD_OFFSET_IN_HEADER(PDSD_HEADER, DSDImagePriority),
+							Adapter->psFlash2xCSInfo->OffsetFromDSDStartForDSDHeader + FIELD_OFFSET_IN_HEADER(struct bcm_dsd_header *, DSDImagePriority),
 							SIGNATURE_SIZE,
 							TRUE);
 				if (Status) {
@@ -3472,7 +3473,7 @@ int BcmSetActiveSection(struct bcm_mini_adapter *Adapter, FLASH2X_SECTION_VAL eF
 				Status = BcmFlash2xBulkWrite(Adapter,
 							&SectImagePriority,
 							HighestPriDSD,
-							Adapter->psFlash2xCSInfo->OffsetFromDSDStartForDSDHeader + FIELD_OFFSET_IN_HEADER(PDSD_HEADER, DSDImagePriority),
+							Adapter->psFlash2xCSInfo->OffsetFromDSDStartForDSDHeader + FIELD_OFFSET_IN_HEADER(struct bcm_dsd_header *, DSDImagePriority),
 							SIGNATURE_SIZE,
 							TRUE);
 				if (Status) {
@@ -3492,7 +3493,7 @@ int BcmSetActiveSection(struct bcm_mini_adapter *Adapter, FLASH2X_SECTION_VAL eF
 			Status = BcmFlash2xBulkWrite(Adapter,
 						&SectImagePriority,
 						eFlash2xSectVal,
-						Adapter->psFlash2xCSInfo->OffsetFromDSDStartForDSDHeader + FIELD_OFFSET_IN_HEADER(PDSD_HEADER, DSDImagePriority),
+						Adapter->psFlash2xCSInfo->OffsetFromDSDStartForDSDHeader + FIELD_OFFSET_IN_HEADER(struct bcm_dsd_header *, DSDImagePriority),
 						SIGNATURE_SIZE,
 						TRUE);
 			if (Status) {
@@ -3516,7 +3517,7 @@ int BcmSetActiveSection(struct bcm_mini_adapter *Adapter, FLASH2X_SECTION_VAL eF
 		break;
 	}
 
-	Adapter->bHeaderChangeAllowed = FALSE;
+	Adapter->bHeaderChangeAllowed = false;
 	return Status;
 }
 
@@ -3529,13 +3530,13 @@ int BcmSetActiveSection(struct bcm_mini_adapter *Adapter, FLASH2X_SECTION_VAL eF
  *
  */
 
-int BcmCopyISO(struct bcm_mini_adapter *Adapter, FLASH2X_COPY_SECTION sCopySectStrut)
+int BcmCopyISO(struct bcm_mini_adapter *Adapter, struct bcm_flash2x_copy_section sCopySectStrut)
 {
 	PCHAR Buff = NULL;
-	FLASH2X_SECTION_VAL eISOReadPart = 0, eISOWritePart = 0;
+	enum bcm_flash2x_section_val eISOReadPart = 0, eISOWritePart = 0;
 	unsigned int uiReadOffsetWithinPart = 0, uiWriteOffsetWithinPart = 0;
 	unsigned int uiTotalDataToCopy = 0;
-	BOOLEAN IsThisHeaderSector = FALSE;
+	bool IsThisHeaderSector = false;
 	unsigned int sigOffset = 0;
 	unsigned int ISOLength = 0;
 	unsigned int Status = STATUS_SUCCESS;
@@ -3550,7 +3551,7 @@ int BcmCopyISO(struct bcm_mini_adapter *Adapter, FLASH2X_COPY_SECTION sCopySectS
 	Status = BcmFlash2xBulkRead(Adapter,
 				&ISOLength,
 				sCopySectStrut.SrcSection,
-				0 + FIELD_OFFSET_IN_HEADER(PISO_HEADER, ISOImageSize),
+				0 + FIELD_OFFSET_IN_HEADER(struct bcm_iso_header *, ISOImageSize),
 				4);
 	if (Status) {
 		BCM_DEBUG_PRINT(Adapter, DBG_TYPE_PRINTK, 0, 0, "Read failed while copying ISO\n");
@@ -3561,7 +3562,7 @@ int BcmCopyISO(struct bcm_mini_adapter *Adapter, FLASH2X_COPY_SECTION sCopySectS
 	if (ISOLength % Adapter->uiSectorSize)
 		ISOLength = Adapter->uiSectorSize * (1 + ISOLength/Adapter->uiSectorSize);
 
-	sigOffset = FIELD_OFFSET_IN_HEADER(PISO_HEADER, ISOImageMagicNumber);
+	sigOffset = FIELD_OFFSET_IN_HEADER(struct bcm_iso_header *, ISOImageMagicNumber);
 
 	Buff = kzalloc(Adapter->uiSectorSize, GFP_KERNEL);
 
@@ -3668,14 +3669,14 @@ int BcmCopyISO(struct bcm_mini_adapter *Adapter, FLASH2X_COPY_SECTION sCopySectS
 				break;
 			}
 
-			Adapter->bHeaderChangeAllowed = FALSE;
+			Adapter->bHeaderChangeAllowed = false;
 			if (IsThisHeaderSector == TRUE) {
 				WriteToFlashWithoutSectorErase(Adapter,
 							SigBuff,
 							eISOWritePart,
 							sigOffset,
 							MAX_RW_SIZE);
-				IsThisHeaderSector = FALSE;
+				IsThisHeaderSector = false;
 			}
 			/* subtracting the written Data */
 			uiTotalDataToCopy = uiTotalDataToCopy - Adapter->uiSectorSize;
@@ -3781,7 +3782,7 @@ int BcmCopyISO(struct bcm_mini_adapter *Adapter, FLASH2X_COPY_SECTION sCopySectS
 				break;
 			}
 
-			Adapter->bHeaderChangeAllowed = FALSE;
+			Adapter->bHeaderChangeAllowed = false;
 			if (IsThisHeaderSector == TRUE) {
 				WriteToFlashWithoutSectorErase(Adapter,
 							SigBuff,
@@ -3789,7 +3790,7 @@ int BcmCopyISO(struct bcm_mini_adapter *Adapter, FLASH2X_COPY_SECTION sCopySectS
 							sigOffset,
 							MAX_RW_SIZE);
 
-				IsThisHeaderSector = FALSE;
+				IsThisHeaderSector = false;
 			}
 
 			/* subtracting the written Data */
@@ -3813,7 +3814,7 @@ out:
  *	Failure :-Return negative error code
  */
 
-int BcmFlash2xCorruptSig(struct bcm_mini_adapter *Adapter, FLASH2X_SECTION_VAL eFlash2xSectionVal)
+int BcmFlash2xCorruptSig(struct bcm_mini_adapter *Adapter, enum bcm_flash2x_section_val eFlash2xSectionVal)
 {
 	int Status = STATUS_SUCCESS;
 
@@ -3841,19 +3842,19 @@ int BcmFlash2xCorruptSig(struct bcm_mini_adapter *Adapter, FLASH2X_SECTION_VAL e
  *	Failure :-Return negative error code
  */
 
-int BcmFlash2xWriteSig(struct bcm_mini_adapter *Adapter, FLASH2X_SECTION_VAL eFlashSectionVal)
+int BcmFlash2xWriteSig(struct bcm_mini_adapter *Adapter, enum bcm_flash2x_section_val eFlashSectionVal)
 {
 	unsigned int uiSignature = 0;
 	unsigned int uiOffset = 0;
 
-	/* DSD_HEADER dsdHeader = {0}; */
-	if (Adapter->bSigCorrupted == FALSE) {
+	/* struct bcm_dsd_header dsdHeader = {0}; */
+	if (Adapter->bSigCorrupted == false) {
 		BCM_DEBUG_PRINT(Adapter, DBG_TYPE_OTHERS, NVM_RW, DBG_LVL_ALL, "Signature is not corrupted by driver, hence not restoring\n");
 		return STATUS_SUCCESS;
 	}
 
-	if (Adapter->bAllDSDWriteAllow == FALSE) {
-		if (IsSectionWritable(Adapter, eFlashSectionVal) == FALSE) {
+	if (Adapter->bAllDSDWriteAllow == false) {
+		if (IsSectionWritable(Adapter, eFlashSectionVal) == false) {
 			BCM_DEBUG_PRINT(Adapter, DBG_TYPE_PRINTK, 0, 0, "Section is not Writable...Hence can't Write signature");
 			return SECTOR_IS_NOT_WRITABLE;
 		}
@@ -3863,7 +3864,7 @@ int BcmFlash2xWriteSig(struct bcm_mini_adapter *Adapter, FLASH2X_SECTION_VAL eFl
 		uiSignature = htonl(DSD_IMAGE_MAGIC_NUMBER);
 		uiOffset = Adapter->psFlash2xCSInfo->OffsetFromDSDStartForDSDHeader;
 
-		uiOffset += FIELD_OFFSET_IN_HEADER(PDSD_HEADER, DSDImageMagicNumber);
+		uiOffset += FIELD_OFFSET_IN_HEADER(struct bcm_dsd_header *, DSDImageMagicNumber);
 
 		if ((ReadDSDSignature(Adapter, eFlashSectionVal) & 0xFF000000) != CORRUPTED_PATTERN) {
 			BCM_DEBUG_PRINT(Adapter, DBG_TYPE_PRINTK, 0, 0, "Corrupted Pattern is not there. Hence won't write sig");
@@ -3872,7 +3873,7 @@ int BcmFlash2xWriteSig(struct bcm_mini_adapter *Adapter, FLASH2X_SECTION_VAL eFl
 	} else if ((eFlashSectionVal == ISO_IMAGE1) || (eFlashSectionVal == ISO_IMAGE2)) {
 		uiSignature = htonl(ISO_IMAGE_MAGIC_NUMBER);
 		/* uiOffset = 0; */
-		uiOffset = FIELD_OFFSET_IN_HEADER(PISO_HEADER, ISOImageMagicNumber);
+		uiOffset = FIELD_OFFSET_IN_HEADER(struct bcm_iso_header *, ISOImageMagicNumber);
 		if ((ReadISOSignature(Adapter, eFlashSectionVal) & 0xFF000000) != CORRUPTED_PATTERN) {
 			BCM_DEBUG_PRINT(Adapter, DBG_TYPE_PRINTK, 0, 0, "Currupted Pattern is not there. Hence won't write sig");
 			return STATUS_FAILURE;
@@ -3885,9 +3886,9 @@ int BcmFlash2xWriteSig(struct bcm_mini_adapter *Adapter, FLASH2X_SECTION_VAL eFl
 	BCM_DEBUG_PRINT(Adapter, DBG_TYPE_OTHERS, NVM_RW, DBG_LVL_ALL, "Restoring the signature");
 
 	Adapter->bHeaderChangeAllowed = TRUE;
-	Adapter->bSigCorrupted = FALSE;
+	Adapter->bSigCorrupted = false;
 	BcmFlash2xBulkWrite(Adapter, &uiSignature, eFlashSectionVal, uiOffset, SIGNATURE_SIZE, TRUE);
-	Adapter->bHeaderChangeAllowed = FALSE;
+	Adapter->bHeaderChangeAllowed = false;
 
 	return STATUS_SUCCESS;
 }
@@ -3898,10 +3899,10 @@ int BcmFlash2xWriteSig(struct bcm_mini_adapter *Adapter, FLASH2X_SECTION_VAL eFl
  * @Adapater :- Bcm Driver Private Data Structure
  * @psFlash2xReadWrite :-Flash2x Read/write structure pointer
  *
- * Return values:-Return TRUE is request is valid else FALSE.
+ * Return values:-Return TRUE is request is valid else false.
  */
 
-int validateFlash2xReadWrite(struct bcm_mini_adapter *Adapter, PFLASH2X_READWRITE psFlash2xReadWrite)
+int validateFlash2xReadWrite(struct bcm_mini_adapter *Adapter, struct bcm_flash2x_readwrite *psFlash2xReadWrite)
 {
 	unsigned int uiNumOfBytes = 0;
 	unsigned int uiSectStartOffset = 0;
@@ -3911,7 +3912,7 @@ int validateFlash2xReadWrite(struct bcm_mini_adapter *Adapter, PFLASH2X_READWRIT
 
 	if (IsSectionExistInFlash(Adapter, psFlash2xReadWrite->Section) != TRUE) {
 		BCM_DEBUG_PRINT(Adapter, DBG_TYPE_PRINTK, 0, 0, "Section<%x> does not exixt in Flash", psFlash2xReadWrite->Section);
-		return FALSE;
+		return false;
 	}
 	uiSectStartOffset = BcmGetSectionValStartOffset(Adapter, psFlash2xReadWrite->Section);
 	BCM_DEBUG_PRINT(Adapter, DBG_TYPE_OTHERS, NVM_RW, DBG_LVL_ALL, "Start offset :%x ,section :%d\n", uiSectStartOffset, psFlash2xReadWrite->Section);
@@ -3948,7 +3949,7 @@ int validateFlash2xReadWrite(struct bcm_mini_adapter *Adapter, PFLASH2X_READWRIT
 		return TRUE;
 	else {
 		BCM_DEBUG_PRINT(Adapter, DBG_TYPE_PRINTK, 0, 0, "Invalid Request....");
-		return FALSE;
+		return false;
 	}
 }
 
@@ -3965,7 +3966,7 @@ int IsFlash2x(struct bcm_mini_adapter *Adapter)
 	if (Adapter->uiFlashLayoutMajorVersion >= FLASH_2X_MAJOR_NUMBER)
 		return TRUE;
 	else
-		return FALSE;
+		return false;
 }
 
 /*
@@ -3985,7 +3986,7 @@ static int GetFlashBaseAddr(struct bcm_mini_adapter *Adapter)
 		 * For All Valid Flash Versions... except 1.1, take the value from FlashBaseAddr
 		 * In case of Raw Read... use the default value
 		 */
-		if (Adapter->uiFlashLayoutMajorVersion && (Adapter->bFlashRawRead == FALSE) &&
+		if (Adapter->uiFlashLayoutMajorVersion && (Adapter->bFlashRawRead == false) &&
 			!((Adapter->uiFlashLayoutMajorVersion == 1) && (Adapter->uiFlashLayoutMinorVersion == 1)))
 			uiBaseAddr = Adapter->uiFlashBaseAdd;
 		else
@@ -3995,7 +3996,7 @@ static int GetFlashBaseAddr(struct bcm_mini_adapter *Adapter)
 		 * For All Valid Flash Versions... except 1.1, take the value from FlashBaseAddr
 		 * In case of Raw Read... use the default value
 		 */
-		if (Adapter->uiFlashLayoutMajorVersion && (Adapter->bFlashRawRead == FALSE) &&
+		if (Adapter->uiFlashLayoutMajorVersion && (Adapter->bFlashRawRead == false) &&
 			!((Adapter->uiFlashLayoutMajorVersion == 1) && (Adapter->uiFlashLayoutMinorVersion == 1)))
 			uiBaseAddr = Adapter->uiFlashBaseAdd | FLASH_CONTIGIOUS_START_ADDR_BEFORE_INIT;
 		else
@@ -4021,8 +4022,8 @@ static int GetFlashBaseAddr(struct bcm_mini_adapter *Adapter)
  */
 
 int BcmCopySection(struct bcm_mini_adapter *Adapter,
-		FLASH2X_SECTION_VAL SrcSection,
-		FLASH2X_SECTION_VAL DstSection,
+		enum bcm_flash2x_section_val SrcSection,
+		enum bcm_flash2x_section_val DstSection,
 		unsigned int offset,
 		unsigned int numOfBytes)
 {
@@ -4073,7 +4074,7 @@ int BcmCopySection(struct bcm_mini_adapter *Adapter,
 	else
 		BuffSize = numOfBytes;
 
-	pBuff = (PCHAR)kzalloc(BuffSize, GFP_KERNEL);
+	pBuff = kzalloc(BuffSize, GFP_KERNEL);
 	if (!pBuff) {
 		BCM_DEBUG_PRINT(Adapter, DBG_TYPE_PRINTK, 0, 0, "Memory allocation failed.. ");
 		return -ENOMEM;
@@ -4093,7 +4094,7 @@ int BcmCopySection(struct bcm_mini_adapter *Adapter,
 			BCM_DEBUG_PRINT(Adapter, DBG_TYPE_PRINTK, 0, 0, "Read failed at offset :%d for NOB :%d", SrcSection, BytesToBeCopied);
 			break;
 		}
-		Status = BcmFlash2xBulkWrite(Adapter, (PUINT)pBuff, DstSection, offset, BytesToBeCopied, FALSE);
+		Status = BcmFlash2xBulkWrite(Adapter, (PUINT)pBuff, DstSection, offset, BytesToBeCopied, false);
 		if (Status) {
 			BCM_DEBUG_PRINT(Adapter, DBG_TYPE_PRINTK, 0, 0, "Write failed at offset :%d for NOB :%d", DstSection, BytesToBeCopied);
 			break;
@@ -4109,7 +4110,7 @@ int BcmCopySection(struct bcm_mini_adapter *Adapter,
 	} while (numOfBytes > 0);
 
 	kfree(pBuff);
-	Adapter->bHeaderChangeAllowed = FALSE;
+	Adapter->bHeaderChangeAllowed = false;
 
 	return Status;
 }
@@ -4128,7 +4129,7 @@ int BcmCopySection(struct bcm_mini_adapter *Adapter,
 int SaveHeaderIfPresent(struct bcm_mini_adapter *Adapter, PUCHAR pBuff, unsigned int uiOffset)
 {
 	unsigned int offsetToProtect = 0, HeaderSizeToProtect = 0;
-	BOOLEAN bHasHeader = FALSE;
+	bool bHasHeader = false;
 	PUCHAR pTempBuff = NULL;
 	unsigned int uiSectAlignAddr = 0;
 	unsigned int sig = 0;
@@ -4141,19 +4142,19 @@ int SaveHeaderIfPresent(struct bcm_mini_adapter *Adapter, PUCHAR pBuff, unsigned
 		(uiSectAlignAddr == BcmGetSectionValEndOffset(Adapter, DSD0) - Adapter->uiSectorSize)) {
 		/* offset from the sector boundary having the header map */
 		offsetToProtect = Adapter->psFlash2xCSInfo->OffsetFromDSDStartForDSDHeader % Adapter->uiSectorSize;
-		HeaderSizeToProtect = sizeof(DSD_HEADER);
+		HeaderSizeToProtect = sizeof(struct bcm_dsd_header);
 		bHasHeader = TRUE;
 	}
 
 	if (uiSectAlignAddr == BcmGetSectionValStartOffset(Adapter, ISO_IMAGE1) ||
 		uiSectAlignAddr == BcmGetSectionValStartOffset(Adapter, ISO_IMAGE2)) {
 		offsetToProtect = 0;
-		HeaderSizeToProtect = sizeof(ISO_HEADER);
+		HeaderSizeToProtect = sizeof(struct bcm_iso_header);
 		bHasHeader = TRUE;
 	}
 	/* If Header is present overwrite passed buffer with this */
-	if (bHasHeader && (Adapter->bHeaderChangeAllowed == FALSE)) {
-		pTempBuff = (PUCHAR)kzalloc(HeaderSizeToProtect, GFP_KERNEL);
+	if (bHasHeader && (Adapter->bHeaderChangeAllowed == false)) {
+		pTempBuff = kzalloc(HeaderSizeToProtect, GFP_KERNEL);
 		if (!pTempBuff) {
 			BCM_DEBUG_PRINT(Adapter, DBG_TYPE_PRINTK, 0, 0, "Memory allocation failed");
 			return -ENOMEM;
@@ -4167,17 +4168,17 @@ int SaveHeaderIfPresent(struct bcm_mini_adapter *Adapter, PUCHAR pBuff, unsigned
 		kfree(pTempBuff);
 	}
 	if (bHasHeader && Adapter->bSigCorrupted) {
-		sig = *((PUINT)(pBuff + offsetToProtect + FIELD_OFFSET_IN_HEADER(PDSD_HEADER, DSDImageMagicNumber)));
+		sig = *((PUINT)(pBuff + offsetToProtect + FIELD_OFFSET_IN_HEADER(struct bcm_dsd_header *, DSDImageMagicNumber)));
 		sig = ntohl(sig);
 		if ((sig & 0xFF000000) != CORRUPTED_PATTERN) {
 			BCM_DEBUG_PRINT(Adapter, DBG_TYPE_OTHERS, NVM_RW, DBG_LVL_ALL, "Desired pattern is not at sig offset. Hence won't restore");
-			Adapter->bSigCorrupted = FALSE;
+			Adapter->bSigCorrupted = false;
 			return STATUS_SUCCESS;
 		}
 		BCM_DEBUG_PRINT(Adapter, DBG_TYPE_OTHERS, NVM_RW, DBG_LVL_ALL, " Corrupted sig is :%X", sig);
-		*((PUINT)(pBuff + offsetToProtect + FIELD_OFFSET_IN_HEADER(PDSD_HEADER, DSDImageMagicNumber))) = htonl(DSD_IMAGE_MAGIC_NUMBER);
+		*((PUINT)(pBuff + offsetToProtect + FIELD_OFFSET_IN_HEADER(struct bcm_dsd_header *, DSDImageMagicNumber))) = htonl(DSD_IMAGE_MAGIC_NUMBER);
 		BCM_DEBUG_PRINT(Adapter, DBG_TYPE_OTHERS, NVM_RW, DBG_LVL_ALL, "Restoring the signature in Header Write only");
-		Adapter->bSigCorrupted = FALSE;
+		Adapter->bSigCorrupted = false;
 	}
 
 	return STATUS_SUCCESS;
@@ -4264,11 +4265,11 @@ static int BcmDoChipSelect(struct bcm_mini_adapter *Adapter, unsigned int offset
 	return STATUS_SUCCESS;
 }
 
-int ReadDSDSignature(struct bcm_mini_adapter *Adapter, FLASH2X_SECTION_VAL dsd)
+int ReadDSDSignature(struct bcm_mini_adapter *Adapter, enum bcm_flash2x_section_val dsd)
 {
 	unsigned int uiDSDsig = 0;
 	/* unsigned int sigoffsetInMap = 0;
-	 * DSD_HEADER dsdHeader = {0};
+	 * struct bcm_dsd_header dsdHeader = {0};
 	 */
 
 	/* sigoffsetInMap =(PUCHAR)&(dsdHeader.DSDImageMagicNumber) -(PUCHAR)&dsdHeader; */
@@ -4280,7 +4281,7 @@ int ReadDSDSignature(struct bcm_mini_adapter *Adapter, FLASH2X_SECTION_VAL dsd)
 	BcmFlash2xBulkRead(Adapter,
 			&uiDSDsig,
 			dsd,
-			Adapter->psFlash2xCSInfo->OffsetFromDSDStartForDSDHeader + FIELD_OFFSET_IN_HEADER(PDSD_HEADER, DSDImageMagicNumber),
+			Adapter->psFlash2xCSInfo->OffsetFromDSDStartForDSDHeader + FIELD_OFFSET_IN_HEADER(struct bcm_dsd_header *, DSDImageMagicNumber),
 			SIGNATURE_SIZE);
 
 	uiDSDsig = ntohl(uiDSDsig);
@@ -4289,11 +4290,11 @@ int ReadDSDSignature(struct bcm_mini_adapter *Adapter, FLASH2X_SECTION_VAL dsd)
 	return uiDSDsig;
 }
 
-int ReadDSDPriority(struct bcm_mini_adapter *Adapter, FLASH2X_SECTION_VAL dsd)
+int ReadDSDPriority(struct bcm_mini_adapter *Adapter, enum bcm_flash2x_section_val dsd)
 {
 	/* unsigned int priOffsetInMap = 0 ; */
 	unsigned int uiDSDPri = STATUS_FAILURE;
-	/* DSD_HEADER dsdHeader = {0};
+	/* struct bcm_dsd_header dsdHeader = {0};
 	 * priOffsetInMap = (PUCHAR)&(dsdHeader.DSDImagePriority) -(PUCHAR)&dsdHeader;
 	 */
 	if (IsSectionWritable(Adapter, dsd)) {
@@ -4301,7 +4302,7 @@ int ReadDSDPriority(struct bcm_mini_adapter *Adapter, FLASH2X_SECTION_VAL dsd)
 			BcmFlash2xBulkRead(Adapter,
 					&uiDSDPri,
 					dsd,
-					Adapter->psFlash2xCSInfo->OffsetFromDSDStartForDSDHeader + FIELD_OFFSET_IN_HEADER(PDSD_HEADER, DSDImagePriority),
+					Adapter->psFlash2xCSInfo->OffsetFromDSDStartForDSDHeader + FIELD_OFFSET_IN_HEADER(struct bcm_dsd_header *, DSDImagePriority),
 					4);
 
 			uiDSDPri = ntohl(uiDSDPri);
@@ -4312,11 +4313,11 @@ int ReadDSDPriority(struct bcm_mini_adapter *Adapter, FLASH2X_SECTION_VAL dsd)
 	return uiDSDPri;
 }
 
-FLASH2X_SECTION_VAL getHighestPriDSD(struct bcm_mini_adapter *Adapter)
+enum bcm_flash2x_section_val getHighestPriDSD(struct bcm_mini_adapter *Adapter)
 {
 	int DSDHighestPri = STATUS_FAILURE;
 	int DsdPri = 0;
-	FLASH2X_SECTION_VAL HighestPriDSD = 0;
+	enum bcm_flash2x_section_val HighestPriDSD = 0;
 
 	if (IsSectionWritable(Adapter, DSD2)) {
 		DSDHighestPri = ReadDSDPriority(Adapter, DSD2);
@@ -4344,11 +4345,11 @@ FLASH2X_SECTION_VAL getHighestPriDSD(struct bcm_mini_adapter *Adapter)
 	return  HighestPriDSD;
 }
 
-int ReadISOSignature(struct bcm_mini_adapter *Adapter, FLASH2X_SECTION_VAL iso)
+int ReadISOSignature(struct bcm_mini_adapter *Adapter, enum bcm_flash2x_section_val iso)
 {
 	unsigned int uiISOsig = 0;
 	/* unsigned int sigoffsetInMap = 0;
-	 * ISO_HEADER ISOHeader = {0};
+	 * struct bcm_iso_header ISOHeader = {0};
 	 * sigoffsetInMap =(PUCHAR)&(ISOHeader.ISOImageMagicNumber) -(PUCHAR)&ISOHeader;
 	 */
 	if (iso != ISO_IMAGE1 && iso != ISO_IMAGE2) {
@@ -4358,7 +4359,7 @@ int ReadISOSignature(struct bcm_mini_adapter *Adapter, FLASH2X_SECTION_VAL iso)
 	BcmFlash2xBulkRead(Adapter,
 			&uiISOsig,
 			iso,
-			0 + FIELD_OFFSET_IN_HEADER(PISO_HEADER, ISOImageMagicNumber),
+			0 + FIELD_OFFSET_IN_HEADER(struct bcm_iso_header *, ISOImageMagicNumber),
 			SIGNATURE_SIZE);
 
 	uiISOsig = ntohl(uiISOsig);
@@ -4367,7 +4368,7 @@ int ReadISOSignature(struct bcm_mini_adapter *Adapter, FLASH2X_SECTION_VAL iso)
 	return uiISOsig;
 }
 
-int ReadISOPriority(struct bcm_mini_adapter *Adapter, FLASH2X_SECTION_VAL iso)
+int ReadISOPriority(struct bcm_mini_adapter *Adapter, enum bcm_flash2x_section_val iso)
 {
 	unsigned int ISOPri = STATUS_FAILURE;
 	if (IsSectionWritable(Adapter, iso)) {
@@ -4375,7 +4376,7 @@ int ReadISOPriority(struct bcm_mini_adapter *Adapter, FLASH2X_SECTION_VAL iso)
 			BcmFlash2xBulkRead(Adapter,
 					&ISOPri,
 					iso,
-					0 + FIELD_OFFSET_IN_HEADER(PISO_HEADER, ISOImagePriority),
+					0 + FIELD_OFFSET_IN_HEADER(struct bcm_iso_header *, ISOImagePriority),
 					4);
 
 			ISOPri = ntohl(ISOPri);
@@ -4386,11 +4387,11 @@ int ReadISOPriority(struct bcm_mini_adapter *Adapter, FLASH2X_SECTION_VAL iso)
 	return ISOPri;
 }
 
-FLASH2X_SECTION_VAL getHighestPriISO(struct bcm_mini_adapter *Adapter)
+enum bcm_flash2x_section_val getHighestPriISO(struct bcm_mini_adapter *Adapter)
 {
 	int ISOHighestPri = STATUS_FAILURE;
 	int ISOPri = 0;
-	FLASH2X_SECTION_VAL HighestPriISO = NO_SECTION_VAL;
+	enum bcm_flash2x_section_val HighestPriISO = NO_SECTION_VAL;
 
 	if (IsSectionWritable(Adapter, ISO_IMAGE2)) {
 		ISOHighestPri = ReadISOPriority(Adapter, ISO_IMAGE2);
@@ -4412,7 +4413,7 @@ FLASH2X_SECTION_VAL getHighestPriISO(struct bcm_mini_adapter *Adapter)
 
 int WriteToFlashWithoutSectorErase(struct bcm_mini_adapter *Adapter,
 				PUINT pBuff,
-				FLASH2X_SECTION_VAL eFlash2xSectionVal,
+				enum bcm_flash2x_section_val eFlash2xSectionVal,
 				unsigned int uiOffset,
 				unsigned int uiNumBytes)
 {
@@ -4449,7 +4450,7 @@ int WriteToFlashWithoutSectorErase(struct bcm_mini_adapter *Adapter,
 		BcmDoChipSelect(Adapter, uiOffset);
 		uiPartOffset = (uiOffset & (FLASH_PART_SIZE - 1)) + GetFlashBaseAddr(Adapter);
 
-		for (i = 0 ; i < uiNumBytes; i += Adapter->ulFlashWriteSize) {
+		for (i = 0; i < uiNumBytes; i += Adapter->ulFlashWriteSize) {
 			if (Adapter->ulFlashWriteSize == BYTE_WRITE_SUPPORT)
 				Status = flashByteWrite(Adapter, uiPartOffset, pcBuff);
 			else
@@ -4468,19 +4469,19 @@ int WriteToFlashWithoutSectorErase(struct bcm_mini_adapter *Adapter,
 	return Status;
 }
 
-BOOLEAN IsSectionExistInFlash(struct bcm_mini_adapter *Adapter, FLASH2X_SECTION_VAL section)
+bool IsSectionExistInFlash(struct bcm_mini_adapter *Adapter, enum bcm_flash2x_section_val section)
 {
-	BOOLEAN SectionPresent = FALSE;
+	bool SectionPresent = false;
 
 	switch (section) {
 	case ISO_IMAGE1:
 		if ((Adapter->psFlash2xCSInfo->OffsetISOImage1Part1Start != UNINIT_PTR_IN_CS) &&
-			(IsNonCDLessDevice(Adapter) == FALSE))
+			(IsNonCDLessDevice(Adapter) == false))
 			SectionPresent = TRUE;
 		break;
 	case ISO_IMAGE2:
 		if ((Adapter->psFlash2xCSInfo->OffsetISOImage2Part1Start != UNINIT_PTR_IN_CS) &&
-			(IsNonCDLessDevice(Adapter) == FALSE))
+			(IsNonCDLessDevice(Adapter) == false))
 			SectionPresent = TRUE;
 		break;
 	case DSD0:
@@ -4517,26 +4518,26 @@ BOOLEAN IsSectionExistInFlash(struct bcm_mini_adapter *Adapter, FLASH2X_SECTION_
 		break;
 	default:
 		BCM_DEBUG_PRINT(Adapter, DBG_TYPE_PRINTK, 0, 0, "Section Does not exist in Flash 2.x");
-		SectionPresent =  FALSE;
+		SectionPresent =  false;
 	}
 
 	return SectionPresent;
 }
 
-int IsSectionWritable(struct bcm_mini_adapter *Adapter, FLASH2X_SECTION_VAL Section)
+int IsSectionWritable(struct bcm_mini_adapter *Adapter, enum bcm_flash2x_section_val Section)
 {
 	int offset = STATUS_FAILURE;
-	int Status = FALSE;
+	int Status = false;
 
-	if (IsSectionExistInFlash(Adapter, Section) == FALSE) {
+	if (IsSectionExistInFlash(Adapter, Section) == false) {
 		BCM_DEBUG_PRINT(Adapter, DBG_TYPE_PRINTK, 0, 0, "Section <%d> does not exixt", Section);
-		return FALSE;
+		return false;
 	}
 
 	offset = BcmGetSectionValStartOffset(Adapter, Section);
 	if (offset == INVALID_OFFSET) {
 		BCM_DEBUG_PRINT(Adapter, DBG_TYPE_PRINTK, 0, 0, "Section<%d> does not exixt", Section);
-		return FALSE;
+		return false;
 	}
 
 	if (IsSectionExistInVendorInfo(Adapter, Section))
@@ -4546,7 +4547,7 @@ int IsSectionWritable(struct bcm_mini_adapter *Adapter, FLASH2X_SECTION_VAL Sect
 	return Status;
 }
 
-static int CorruptDSDSig(struct bcm_mini_adapter *Adapter, FLASH2X_SECTION_VAL eFlash2xSectionVal)
+static int CorruptDSDSig(struct bcm_mini_adapter *Adapter, enum bcm_flash2x_section_val eFlash2xSectionVal)
 {
 	PUCHAR pBuff = NULL;
 	unsigned int sig = 0;
@@ -4554,21 +4555,21 @@ static int CorruptDSDSig(struct bcm_mini_adapter *Adapter, FLASH2X_SECTION_VAL e
 	unsigned int BlockStatus = 0;
 	unsigned int uiSectAlignAddr = 0;
 
-	Adapter->bSigCorrupted = FALSE;
-	if (Adapter->bAllDSDWriteAllow == FALSE) {
+	Adapter->bSigCorrupted = false;
+	if (Adapter->bAllDSDWriteAllow == false) {
 		if (IsSectionWritable(Adapter, eFlash2xSectionVal) != TRUE) {
 			BCM_DEBUG_PRINT(Adapter, DBG_TYPE_PRINTK, 0, 0, "Section is not Writable...Hence can't Corrupt signature");
 			return SECTOR_IS_NOT_WRITABLE;
 		}
 	}
 
-	pBuff = (PUCHAR)kzalloc(MAX_RW_SIZE, GFP_KERNEL);
+	pBuff = kzalloc(MAX_RW_SIZE, GFP_KERNEL);
 	if (!pBuff) {
 		BCM_DEBUG_PRINT(Adapter, DBG_TYPE_PRINTK, 0, 0, "Can't allocate memorey");
 		return -ENOMEM;
 	}
 
-	uiOffset = Adapter->psFlash2xCSInfo->OffsetFromDSDStartForDSDHeader + sizeof(DSD_HEADER);
+	uiOffset = Adapter->psFlash2xCSInfo->OffsetFromDSDStartForDSDHeader + sizeof(struct bcm_dsd_header);
 	uiOffset -= MAX_RW_SIZE;
 
 	BcmFlash2xBulkRead(Adapter, (PUINT)pBuff, eFlash2xSectionVal, uiOffset, MAX_RW_SIZE);
@@ -4608,20 +4609,20 @@ static int CorruptDSDSig(struct bcm_mini_adapter *Adapter, FLASH2X_SECTION_VAL e
 	return STATUS_SUCCESS;
 }
 
-static int CorruptISOSig(struct bcm_mini_adapter *Adapter, FLASH2X_SECTION_VAL eFlash2xSectionVal)
+static int CorruptISOSig(struct bcm_mini_adapter *Adapter, enum bcm_flash2x_section_val eFlash2xSectionVal)
 {
 	PUCHAR pBuff = NULL;
 	unsigned int sig = 0;
 	unsigned int uiOffset = 0;
 
-	Adapter->bSigCorrupted = FALSE;
+	Adapter->bSigCorrupted = false;
 
 	if (IsSectionWritable(Adapter, eFlash2xSectionVal) != TRUE) {
 		BCM_DEBUG_PRINT(Adapter, DBG_TYPE_PRINTK, 0, 0, "Section is not Writable...Hence can't Corrupt signature");
 		return SECTOR_IS_NOT_WRITABLE;
 	}
 
-	pBuff = (PUCHAR)kzalloc(MAX_RW_SIZE, GFP_KERNEL);
+	pBuff = kzalloc(MAX_RW_SIZE, GFP_KERNEL);
 	if (!pBuff) {
 		BCM_DEBUG_PRINT(Adapter, DBG_TYPE_PRINTK, 0, 0, "Can't allocate memorey");
 		return -ENOMEM;
@@ -4655,10 +4656,10 @@ static int CorruptISOSig(struct bcm_mini_adapter *Adapter, FLASH2X_SECTION_VAL e
 	return STATUS_SUCCESS;
 }
 
-BOOLEAN IsNonCDLessDevice(struct bcm_mini_adapter *Adapter)
+bool IsNonCDLessDevice(struct bcm_mini_adapter *Adapter)
 {
 	if (Adapter->psFlash2xCSInfo->IsCDLessDeviceBootSig == NON_CDLESS_DEVICE_BOOT_SIG)
 		return TRUE;
 	else
-		return FALSE;
+		return false;
 }

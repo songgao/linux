@@ -64,7 +64,7 @@ static struct snd_soc_dai_link imx_mc13783_dai_mc13783[] = {
 		.codec_dai_name	 = "mc13783-hifi",
 		.codec_name	 = "mc13783-codec",
 		.cpu_dai_name	 = "imx-ssi.0",
-		.platform_name	 = "imx-pcm-audio.0",
+		.platform_name	 = "imx-ssi.0",
 		.ops		 = &imx_mc13783_hifi_ops,
 		.symmetric_rates = 1,
 		.dai_fmt 	 = FMT_SSI,
@@ -90,6 +90,7 @@ static const struct snd_soc_dapm_route imx_mc13783_routes[] = {
 
 static struct snd_soc_card imx_mc13783 = {
 	.name		= "imx_mc13783",
+	.owner		= THIS_MODULE,
 	.dai_link	= imx_mc13783_dai_mc13783,
 	.num_links	= ARRAY_SIZE(imx_mc13783_dai_mc13783),
 	.dapm_widgets	= imx_mc13783_widget,
@@ -98,7 +99,7 @@ static struct snd_soc_card imx_mc13783 = {
 	.num_dapm_routes = ARRAY_SIZE(imx_mc13783_routes),
 };
 
-static int __devinit imx_mc13783_probe(struct platform_device *pdev)
+static int imx_mc13783_probe(struct platform_device *pdev)
 {
 	int ret;
 
@@ -111,7 +112,7 @@ static int __devinit imx_mc13783_probe(struct platform_device *pdev)
 		return ret;
 	}
 
-	if (machine_is_mx31_3ds()) {
+	if (machine_is_mx31_3ds() || machine_is_mx31moboard()) {
 		imx_audmux_v2_configure_port(MX31_AUDMUX_PORT4_SSI_PINS_4,
 			IMX_AUDMUX_V2_PTCR_SYN,
 			IMX_AUDMUX_V2_PDCR_RXDSEL(MX31_AUDMUX_PORT1_SSI0) |
@@ -148,7 +149,7 @@ static int __devinit imx_mc13783_probe(struct platform_device *pdev)
 	return ret;
 }
 
-static int __devexit imx_mc13783_remove(struct platform_device *pdev)
+static int imx_mc13783_remove(struct platform_device *pdev)
 {
 	snd_soc_unregister_card(&imx_mc13783);
 
@@ -159,9 +160,10 @@ static struct platform_driver imx_mc13783_audio_driver = {
 	.driver = {
 		.name = "imx_mc13783",
 		.owner = THIS_MODULE,
+		.pm = &snd_soc_pm_ops,
 	},
 	.probe = imx_mc13783_probe,
-	.remove = __devexit_p(imx_mc13783_remove)
+	.remove = imx_mc13783_remove
 };
 
 module_platform_driver(imx_mc13783_audio_driver);

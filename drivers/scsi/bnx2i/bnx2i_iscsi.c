@@ -1,7 +1,7 @@
 /*
  * bnx2i_iscsi.c: Broadcom NetXtreme II iSCSI driver.
  *
- * Copyright (c) 2006 - 2012 Broadcom Corporation
+ * Copyright (c) 2006 - 2013 Broadcom Corporation
  * Copyright (c) 2007, 2008 Red Hat, Inc.  All rights reserved.
  * Copyright (c) 2007, 2008 Mike Christie
  *
@@ -596,7 +596,7 @@ void bnx2i_drop_session(struct iscsi_cls_session *cls_session)
 /**
  * bnx2i_ep_destroy_list_add - add an entry to EP destroy list
  * @hba:	pointer to adapter instance
- * @ep:		pointer to endpoint (transport indentifier) structure
+ * @ep:		pointer to endpoint (transport identifier) structure
  *
  * EP destroy queue manager
  */
@@ -613,7 +613,7 @@ static int bnx2i_ep_destroy_list_add(struct bnx2i_hba *hba,
  * bnx2i_ep_destroy_list_del - add an entry to EP destroy list
  *
  * @hba: 		pointer to adapter instance
- * @ep: 		pointer to endpoint (transport indentifier) structure
+ * @ep: 		pointer to endpoint (transport identifier) structure
  *
  * EP destroy queue manager
  */
@@ -630,7 +630,7 @@ static int bnx2i_ep_destroy_list_del(struct bnx2i_hba *hba,
 /**
  * bnx2i_ep_ofld_list_add - add an entry to ep offload pending list
  * @hba:	pointer to adapter instance
- * @ep:		pointer to endpoint (transport indentifier) structure
+ * @ep:		pointer to endpoint (transport identifier) structure
  *
  * pending conn offload completion queue manager
  */
@@ -646,7 +646,7 @@ static int bnx2i_ep_ofld_list_add(struct bnx2i_hba *hba,
 /**
  * bnx2i_ep_ofld_list_del - add an entry to ep offload pending list
  * @hba: 		pointer to adapter instance
- * @ep: 		pointer to endpoint (transport indentifier) structure
+ * @ep: 		pointer to endpoint (transport identifier) structure
  *
  * pending conn offload completion queue manager
  */
@@ -721,7 +721,7 @@ bnx2i_find_ep_in_destroy_list(struct bnx2i_hba *hba, u32 iscsi_cid)
 /**
  * bnx2i_ep_active_list_add - add an entry to ep active list
  * @hba:	pointer to adapter instance
- * @ep:		pointer to endpoint (transport indentifier) structure
+ * @ep:		pointer to endpoint (transport identifier) structure
  *
  * current active conn queue manager
  */
@@ -737,7 +737,7 @@ static void bnx2i_ep_active_list_add(struct bnx2i_hba *hba,
 /**
  * bnx2i_ep_active_list_del - deletes an entry to ep active list
  * @hba:	pointer to adapter instance
- * @ep:		pointer to endpoint (transport indentifier) structure
+ * @ep:		pointer to endpoint (transport identifier) structure
  *
  * current active conn queue manager
  */
@@ -808,7 +808,7 @@ struct bnx2i_hba *bnx2i_alloc_hba(struct cnic_dev *cnic)
 	hba->pci_func = PCI_FUNC(hba->pcidev->devfn);
 	hba->pci_devno = PCI_SLOT(hba->pcidev->devfn);
 
-	bnx2i_identify_device(hba);
+	bnx2i_identify_device(hba, cnic);
 	bnx2i_setup_host_queue_size(hba, shost);
 
 	hba->reg_base = pci_resource_start(hba->pcidev, 0);
@@ -1695,7 +1695,7 @@ no_nx2_route:
 /**
  * bnx2i_tear_down_conn - tear down iscsi/tcp connection and free resources
  * @hba:	pointer to adapter instance
- * @ep:		endpoint (transport indentifier) structure
+ * @ep:		endpoint (transport identifier) structure
  *
  * destroys cm_sock structure and on chip iscsi context
  */

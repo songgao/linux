@@ -21,7 +21,6 @@
 #include <mach/hardware.h>
 
 #include "../codecs/tlv320aic23.h"
-#include "ep93xx-pcm.h"
 
 #define CODEC_CLOCK 5644800
 
@@ -98,7 +97,7 @@ static struct snd_soc_card snd_soc_snappercl15 = {
 	.num_links	= 1,
 };
 
-static int __devinit snappercl15_probe(struct platform_device *pdev)
+static int snappercl15_probe(struct platform_device *pdev)
 {
 	struct snd_soc_card *card = &snd_soc_snappercl15;
 	int ret;
@@ -119,7 +118,7 @@ static int __devinit snappercl15_probe(struct platform_device *pdev)
 	return ret;
 }
 
-static int __devexit snappercl15_remove(struct platform_device *pdev)
+static int snappercl15_remove(struct platform_device *pdev)
 {
 	struct snd_soc_card *card = platform_get_drvdata(pdev);
 
@@ -135,7 +134,7 @@ static struct platform_driver snappercl15_driver = {
 		.owner	= THIS_MODULE,
 	},
 	.probe		= snappercl15_probe,
-	.remove		= __devexit_p(snappercl15_remove),
+	.remove		= snappercl15_remove,
 };
 
 module_platform_driver(snappercl15_driver);

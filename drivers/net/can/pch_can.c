@@ -560,7 +560,7 @@ static void pch_can_error(struct net_device *ndev, u32 status)
 		stats->rx_errors++;
 		break;
 	case PCH_CRC_ERR:
-		cf->data[2] |= CAN_ERR_PROT_LOC_CRC_SEQ |
+		cf->data[3] |= CAN_ERR_PROT_LOC_CRC_SEQ |
 			       CAN_ERR_PROT_LOC_CRC_DEL;
 		priv->can.can_stats.bus_error++;
 		stats->rx_errors++;
@@ -954,7 +954,7 @@ static const struct net_device_ops pch_can_netdev_ops = {
 	.ndo_start_xmit		= pch_xmit,
 };
 
-static void __devexit pch_can_remove(struct pci_dev *pdev)
+static void pch_can_remove(struct pci_dev *pdev)
 {
 	struct net_device *ndev = pci_get_drvdata(pdev);
 	struct pch_can_priv *priv = netdev_priv(ndev);
@@ -964,7 +964,6 @@ static void __devexit pch_can_remove(struct pci_dev *pdev)
 		pci_disable_msi(priv->dev);
 	pci_release_regions(pdev);
 	pci_disable_device(pdev);
-	pci_set_drvdata(pdev, NULL);
 	pch_can_reset(priv);
 	pci_iounmap(pdev, priv->regs);
 	free_candev(priv->ndev);
@@ -1178,7 +1177,7 @@ static int pch_can_get_berr_counter(const struct net_device *dev,
 	return 0;
 }
 
-static int __devinit pch_can_probe(struct pci_dev *pdev,
+static int pch_can_probe(struct pci_dev *pdev,
 				   const struct pci_device_id *id)
 {
 	struct net_device *ndev;
@@ -1269,7 +1268,7 @@ static struct pci_driver pch_can_pci_driver = {
 	.name = "pch_can",
 	.id_table = pch_pci_tbl,
 	.probe = pch_can_probe,
-	.remove = __devexit_p(pch_can_remove),
+	.remove = pch_can_remove,
 	.suspend = pch_can_suspend,
 	.resume = pch_can_resume,
 };

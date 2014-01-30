@@ -17,12 +17,12 @@
 #include <linux/platform_device.h>
 #include <linux/spi/spi.h>
 
+#include <linux/platform_data/omap-wd-timer.h>
+
 #include <asm/mach/map.h>
 
-#include <plat/tc.h>
+#include <mach/tc.h>
 #include <mach/mux.h>
-#include <plat/dma.h>
-#include <plat/mmc.h>
 
 #include <mach/omap7xx.h>
 #include <mach/camera.h>
@@ -30,6 +30,8 @@
 
 #include "common.h"
 #include "clock.h"
+#include "mmc.h"
+#include "sram.h"
 
 #if defined(CONFIG_SND_SOC) || defined(CONFIG_SND_SOC_MODULE)
 
@@ -175,6 +177,13 @@ static int __init omap_mmc_add(const char *name, int id, unsigned long base,
 	res[3].name = "tx";
 	res[3].flags = IORESOURCE_DMA;
 
+	if (cpu_is_omap7xx())
+		data->slots[0].features = MMC_OMAP7XX;
+	if (cpu_is_omap15xx())
+		data->slots[0].features = MMC_OMAP15XX;
+	if (cpu_is_omap16xx())
+		data->slots[0].features = MMC_OMAP16XX;
+
 	ret = platform_device_add_resources(pdev, res, ARRAY_SIZE(res));
 	if (ret == 0)
 		ret = platform_device_add_data(pdev, data, sizeof(*data));
@@ -213,16 +222,16 @@ void __init omap1_init_mmc(struct omap_mmc_platform_data **mmc_data,
 		case 0:
 			base = OMAP1_MMC1_BASE;
 			irq = INT_MMC;
-			rx_req = OMAP_DMA_MMC_RX;
-			tx_req = OMAP_DMA_MMC_TX;
+			rx_req = 22;
+			tx_req = 21;
 			break;
 		case 1:
 			if (!cpu_is_omap16xx())
 				return;
 			base = OMAP1_MMC2_BASE;
 			irq = INT_1610_MMC2;
-			rx_req = OMAP_DMA_MMC2_RX;
-			tx_req = OMAP_DMA_MMC2_TX;
+			rx_req = 55;
+			tx_req = 54;
 			break;
 		default:
 			continue;
@@ -439,18 +448,31 @@ static struct resource wdt_resources[] = {
 };
 
 static struct platform_device omap_wdt_device = {
-	.name	   = "omap_wdt",
-	.id	     = -1,
+	.name		= "omap_wdt",
+	.id		= -1,
 	.num_resources	= ARRAY_SIZE(wdt_resources),
 	.resource	= wdt_resources,
 };
 
 static int __init omap_init_wdt(void)
 {
+	struct omap_wd_timer_platform_data pdata;
+	int ret;
+
 	if (!cpu_is_omap16xx())
 		return -ENODEV;
 
-	return platform_device_register(&omap_wdt_device);
+	pdata.read_reset_sources = omap1_get_reset_sources;
+
+	ret = platform_device_register(&omap_wdt_device);
+	if (!ret) {
+		ret = platform_device_add_data(&omap_wdt_device, &pdata,
+					       sizeof(pdata));
+		if (ret)
+			platform_device_del(&omap_wdt_device);
+	}
+
+	return ret;
 }
 subsys_initcall(omap_init_wdt);
 #endif

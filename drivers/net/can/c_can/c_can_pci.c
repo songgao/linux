@@ -63,8 +63,8 @@ static void c_can_pci_write_reg_aligned_to_32bit(struct c_can_priv *priv,
 	writew(val, priv->base + 2 * priv->regs[index]);
 }
 
-static int __devinit c_can_pci_probe(struct pci_dev *pdev,
-				     const struct pci_device_id *ent)
+static int c_can_pci_probe(struct pci_dev *pdev,
+			   const struct pci_device_id *ent)
 {
 	struct c_can_pci_data *c_can_pci_data = (void *)ent->driver_data;
 	struct c_can_priv *priv;
@@ -160,7 +160,6 @@ static int __devinit c_can_pci_probe(struct pci_dev *pdev,
 	return 0;
 
 out_free_c_can:
-	pci_set_drvdata(pdev, NULL);
 	free_c_can_dev(dev);
 out_iounmap:
 	pci_iounmap(pdev, addr);
@@ -174,14 +173,13 @@ out:
 	return ret;
 }
 
-static void __devexit c_can_pci_remove(struct pci_dev *pdev)
+static void c_can_pci_remove(struct pci_dev *pdev)
 {
 	struct net_device *dev = pci_get_drvdata(pdev);
 	struct c_can_priv *priv = netdev_priv(dev);
 
 	unregister_c_can_dev(dev);
 
-	pci_set_drvdata(pdev, NULL);
 	free_c_can_dev(dev);
 
 	pci_iounmap(pdev, priv->base);
@@ -210,7 +208,7 @@ static struct pci_driver c_can_pci_driver = {
 	.name = KBUILD_MODNAME,
 	.id_table = c_can_pci_tbl,
 	.probe = c_can_pci_probe,
-	.remove = __devexit_p(c_can_pci_remove),
+	.remove = c_can_pci_remove,
 };
 
 module_pci_driver(c_can_pci_driver);

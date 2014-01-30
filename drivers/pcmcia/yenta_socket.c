@@ -783,7 +783,7 @@ static void yenta_free_resources(struct yenta_socket *socket)
 /*
  * Close it down - release our resources and go home..
  */
-static void __devexit yenta_close(struct pci_dev *dev)
+static void yenta_close(struct pci_dev *dev)
 {
 	struct yenta_socket *sock = pci_get_drvdata(dev);
 
@@ -1142,7 +1142,7 @@ static void yenta_fixup_parent_bridge(struct pci_bus *cardbus_bridge)
  * interrupt, and that we can map the cardbus area. Fill in the
  * socket information structure..
  */
-static int __devinit yenta_probe(struct pci_dev *dev, const struct pci_device_id *id)
+static int yenta_probe(struct pci_dev *dev, const struct pci_device_id *id)
 {
 	struct yenta_socket *socket;
 	int ret;
@@ -1435,24 +1435,10 @@ static struct pci_driver yenta_cardbus_driver = {
 	.name		= "yenta_cardbus",
 	.id_table	= yenta_table,
 	.probe		= yenta_probe,
-	.remove		= __devexit_p(yenta_close),
+	.remove		= yenta_close,
 	.driver.pm	= YENTA_PM_OPS,
 };
 
-
-static int __init yenta_socket_init(void)
-{
-	return pci_register_driver(&yenta_cardbus_driver);
-}
-
-
-static void __exit yenta_socket_exit(void)
-{
-	pci_unregister_driver(&yenta_cardbus_driver);
-}
-
-
-module_init(yenta_socket_init);
-module_exit(yenta_socket_exit);
+module_pci_driver(yenta_cardbus_driver);
 
 MODULE_LICENSE("GPL");

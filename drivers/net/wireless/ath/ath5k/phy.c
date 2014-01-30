@@ -1616,7 +1616,7 @@ ath5k_hw_update_noise_floor(struct ath5k_hw *ah)
 
 	ah->ah_cal_mask |= AR5K_CALIBRATION_NF;
 
-	ee_mode = ath5k_eeprom_mode_from_channel(ah->ah_current_channel);
+	ee_mode = ath5k_eeprom_mode_from_channel(ah, ah->ah_current_channel);
 
 	/* completed NF calibration, test threshold */
 	nf = ath5k_hw_read_measured_noise_floor(ah);
@@ -2318,12 +2318,7 @@ ath5k_hw_set_antenna_mode(struct ath5k_hw *ah, u8 ant_mode)
 
 	def_ant = ah->ah_def_ant;
 
-	ee_mode = ath5k_eeprom_mode_from_channel(channel);
-	if (ee_mode < 0) {
-		ATH5K_ERR(ah,
-			"invalid channel: %d\n", channel->center_freq);
-		return;
-	}
+	ee_mode = ath5k_eeprom_mode_from_channel(ah, channel);
 
 	switch (ant_mode) {
 	case AR5K_ANTMODE_DEFAULT:
@@ -3625,12 +3620,7 @@ ath5k_hw_txpower(struct ath5k_hw *ah, struct ieee80211_channel *channel,
 		return -EINVAL;
 	}
 
-	ee_mode = ath5k_eeprom_mode_from_channel(channel);
-	if (ee_mode < 0) {
-		ATH5K_ERR(ah,
-			"invalid channel: %d\n", channel->center_freq);
-		return -EINVAL;
-	}
+	ee_mode = ath5k_eeprom_mode_from_channel(ah, channel);
 
 	/* Initialize TX power table */
 	switch (ah->ah_radio) {

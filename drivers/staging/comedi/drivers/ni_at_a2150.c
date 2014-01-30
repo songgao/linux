@@ -15,12 +15,6 @@
     but WITHOUT ANY WARRANTY; without even the implied warranty of
     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
     GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program; if not, write to the Free Software
-    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
-
-************************************************************************
 */
 /*
 Driver: ni_at_a2150
@@ -64,12 +58,14 @@ TRIG_WAKE_EOS
 
 */
 
+#include <linux/module.h>
+#include <linux/delay.h>
 #include <linux/interrupt.h>
 #include <linux/slab.h>
 #include "../comedidev.h"
 
-#include <linux/ioport.h>
 #include <linux/io.h>
+
 #include <asm/dma.h>
 
 #include "8253.h"
@@ -154,22 +150,15 @@ static const struct a2150_board a2150_boards[] = {
 	 },
 };
 
-/*
- * Useful for shorthand access to the particular board structure
- */
-#define thisboard ((const struct a2150_board *)dev->board_ptr)
-
 struct a2150_private {
 
 	volatile unsigned int count;	/* number of data points left to be taken */
 	unsigned int dma;	/*  dma channel */
-	s16 *dma_buffer;	/*  dma buffer */
+	uint16_t *dma_buffer;	/*  dma buffer */
 	unsigned int dma_transfer_size;	/*  size in bytes of dma transfers */
 	int irq_dma_bits;	/*  irq/dma register bits */
 	int config_bits;	/*  config register bits */
 };
-
-#define devpriv ((struct a2150_private *)dev->private)
 
 static int a2150_cancel(struct comedi_device *dev, struct comedi_subdevice *s);
 
@@ -182,6 +171,8 @@ static int a2150_set_chanlist(struct comedi_device *dev,
 
 static void ni_dump_regs(struct comedi_device *dev)
 {
+	struct a2150_private *devpriv = dev->private;
+
 	printk("config bits 0x%x\n", devpriv->config_bits);
 	printk("irq dma bits 0x%x\n", devpriv->irq_dma_bits);
 	printk("status bits 0x%x\n", inw(dev->iobase + STATUS_REG));
@@ -196,14 +187,15 @@ static irqreturn_t a2150_interrupt(int irq, void *d)
 	int status;
 	unsigned long flags;
 	struct comedi_device *dev = d;
+	struct a2150_private *devpriv = dev->private;
 	struct comedi_subdevice *s = dev->read_subdev;
 	struct comedi_async *async;
 	struct comedi_cmd *cmd;
 	unsigned int max_points, num_points, residue, leftover;
-	short dpnt;
+	unsigned short dpnt;
 	static const int sample_size = sizeof(devpriv->dma_buffer[0]);
 
-	if (dev->attached == 0) {
+	if (!dev->attached) {
 		comedi_error(dev, "premature interrupt");
 		return IRQ_HANDLED;
 	}
@@ -300,6 +292,8 @@ static irqreturn_t a2150_interrupt(int irq, void *d)
 
 static int a2150_cancel(struct comedi_device *dev, struct comedi_subdevice *s)
 {
+	struct a2150_private *devpriv = dev->private;
+
 	/*  disable dma on card */
 	devpriv->irq_dma_bits &= ~DMA_INTR_EN_BIT & ~DMA_EN_BIT;
 	outw(devpriv->irq_dma_bits, dev->iobase + IRQ_DMA_CNTRL_REG);
@@ -316,6 +310,7 @@ static int a2150_cancel(struct comedi_device *dev, struct comedi_subdevice *s)
 static int a2150_ai_cmdtest(struct comedi_device *dev,
 			    struct comedi_subdevice *s, struct comedi_cmd *cmd)
 {
+	const struct a2150_board *thisboard = comedi_board(dev);
 	int err = 0;
 	int tmp;
 	int startChan;
@@ -342,37 +337,21 @@ static int a2150_ai_cmdtest(struct comedi_device *dev,
 	if (err)
 		return 2;
 
-	/* step 3: make sure arguments are trivially compatible */
+	/* Step 3: check if arguments are trivially valid */
 
-	if (cmd->start_arg != 0) {
-		cmd->start_arg = 0;
-		err++;
-	}
-	if (cmd->convert_src == TRIG_TIMER) {
-		if (cmd->convert_arg < thisboard->ai_speed) {
-			cmd->convert_arg = thisboard->ai_speed;
-			err++;
-		}
-	}
-	if (!cmd->chanlist_len) {
-		cmd->chanlist_len = 1;
-		err++;
-	}
-	if (cmd->scan_end_arg != cmd->chanlist_len) {
-		cmd->scan_end_arg = cmd->chanlist_len;
-		err++;
-	}
-	if (cmd->stop_src == TRIG_COUNT) {
-		if (!cmd->stop_arg) {
-			cmd->stop_arg = 1;
-			err++;
-		}
-	} else {		/* TRIG_NONE */
-		if (cmd->stop_arg != 0) {
-			cmd->stop_arg = 0;
-			err++;
-		}
-	}
+	err |= cfc_check_trigger_arg_is(&cmd->start_arg, 0);
+
+	if (cmd->convert_src == TRIG_TIMER)
+		err |= cfc_check_trigger_arg_min(&cmd->convert_arg,
+						 thisboard->ai_speed);
+
+	err |= cfc_check_trigger_arg_min(&cmd->chanlist_len, 1);
+	err |= cfc_check_trigger_arg_is(&cmd->scan_end_arg, cmd->chanlist_len);
+
+	if (cmd->stop_src == TRIG_COUNT)
+		err |= cfc_check_trigger_arg_min(&cmd->stop_arg, 1);
+	else	/* TRIG_NONE */
+		err |= cfc_check_trigger_arg_is(&cmd->stop_arg, 0);
 
 	if (err)
 		return 3;
@@ -425,6 +404,7 @@ static int a2150_ai_cmdtest(struct comedi_device *dev,
 
 static int a2150_ai_cmd(struct comedi_device *dev, struct comedi_subdevice *s)
 {
+	struct a2150_private *devpriv = dev->private;
 	struct comedi_async *async = s->async;
 	struct comedi_cmd *cmd = &async->cmd;
 	unsigned long lock_flags;
@@ -536,6 +516,7 @@ static int a2150_ai_cmd(struct comedi_device *dev, struct comedi_subdevice *s)
 static int a2150_ai_rinsn(struct comedi_device *dev, struct comedi_subdevice *s,
 			  struct comedi_insn *insn, unsigned int *data)
 {
+	struct a2150_private *devpriv = dev->private;
 	unsigned int i, n;
 	static const int timeout = 100000;
 	static const int filter_delay = 36;
@@ -615,6 +596,8 @@ static int a2150_ai_rinsn(struct comedi_device *dev, struct comedi_subdevice *s,
 static int a2150_get_timing(struct comedi_device *dev, unsigned int *period,
 			    int flags)
 {
+	const struct a2150_board *thisboard = comedi_board(dev);
+	struct a2150_private *devpriv = dev->private;
 	int lub, glb, temp;
 	int lub_divisor_shift, lub_index, glb_divisor_shift, glb_index;
 	int i, j;
@@ -689,6 +672,8 @@ static int a2150_set_chanlist(struct comedi_device *dev,
 			      unsigned int start_channel,
 			      unsigned int num_channels)
 {
+	struct a2150_private *devpriv = dev->private;
+
 	if (start_channel + num_channels > 4)
 		return -1;
 
@@ -699,13 +684,12 @@ static int a2150_set_chanlist(struct comedi_device *dev,
 		devpriv->config_bits |= CHANNEL_BITS(0x4 | start_channel);
 		break;
 	case 2:
-		if (start_channel == 0) {
+		if (start_channel == 0)
 			devpriv->config_bits |= CHANNEL_BITS(0x2);
-		} else if (start_channel == 2) {
+		else if (start_channel == 2)
 			devpriv->config_bits |= CHANNEL_BITS(0x3);
-		} else {
+		else
 			return -1;
-		}
 		break;
 	case 4:
 		devpriv->config_bits |= CHANNEL_BITS(0x1);
@@ -727,43 +711,22 @@ static int a2150_probe(struct comedi_device *dev)
 
 static int a2150_attach(struct comedi_device *dev, struct comedi_devconfig *it)
 {
+	const struct a2150_board *thisboard = comedi_board(dev);
+	struct a2150_private *devpriv;
 	struct comedi_subdevice *s;
-	unsigned long iobase = it->options[0];
 	unsigned int irq = it->options[1];
 	unsigned int dma = it->options[2];
 	static const int timeout = 2000;
 	int i;
 	int ret;
 
-	printk("comedi%d: %s: io 0x%lx", dev->minor, dev->driver->driver_name,
-	       iobase);
-	if (irq) {
-		printk(", irq %u", irq);
-	} else {
-		printk(", no irq");
-	}
-	if (dma) {
-		printk(", dma %u", dma);
-	} else {
-		printk(", no dma");
-	}
-	printk("\n");
-
-	/* allocate and initialize dev->private */
-	if (alloc_private(dev, sizeof(struct a2150_private)) < 0)
+	devpriv = comedi_alloc_devpriv(dev, sizeof(*devpriv));
+	if (!devpriv)
 		return -ENOMEM;
 
-	if (iobase == 0) {
-		printk(" io base address required\n");
-		return -EINVAL;
-	}
-
-	/* check if io addresses are available */
-	if (!request_region(iobase, A2150_SIZE, dev->driver->driver_name)) {
-		printk(" I/O port conflict\n");
-		return -EIO;
-	}
-	dev->iobase = iobase;
+	ret = comedi_request_region(dev, it->options[0], A2150_SIZE);
+	if (ret)
+		return ret;
 
 	/* grab our IRQ */
 	if (irq) {
@@ -803,6 +766,7 @@ static int a2150_attach(struct comedi_device *dev, struct comedi_devconfig *it)
 	}
 
 	dev->board_ptr = a2150_boards + a2150_probe(dev);
+	thisboard = comedi_board(dev);
 	dev->board_name = thisboard->name;
 
 	ret = comedi_alloc_subdevices(dev, 1);
@@ -855,17 +819,16 @@ static int a2150_attach(struct comedi_device *dev, struct comedi_devconfig *it)
 
 static void a2150_detach(struct comedi_device *dev)
 {
-	if (dev->iobase) {
+	struct a2150_private *devpriv = dev->private;
+
+	if (dev->iobase)
 		outw(APD_BIT | DPD_BIT, dev->iobase + CONFIG_REG);
-		release_region(dev->iobase, A2150_SIZE);
-	}
-	if (dev->irq)
-		free_irq(dev->irq, dev);
 	if (devpriv) {
 		if (devpriv->dma)
 			free_dma(devpriv->dma);
 		kfree(devpriv->dma_buffer);
 	}
+	comedi_legacy_detach(dev);
 };
 
 static struct comedi_driver ni_at_a2150_driver = {

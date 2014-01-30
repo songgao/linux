@@ -45,9 +45,10 @@
 
 #include <asm/compat.h>
 #include <asm/cacheflush.h>
+#include <asm/fpsimd.h>
+#include <asm/mmu_context.h>
 #include <asm/processor.h>
 #include <asm/stacktrace.h>
-#include <asm/fpsimd.h>
 
 static void setup_restart(void)
 {
@@ -80,14 +81,18 @@ void soft_restart(unsigned long addr)
 void (*pm_power_off)(void);
 EXPORT_SYMBOL_GPL(pm_power_off);
 
-void (*pm_restart)(const char *cmd);
-EXPORT_SYMBOL_GPL(pm_restart);
+void (*arm_pm_restart)(enum reboot_mode reboot_mode, const char *cmd);
+EXPORT_SYMBOL_GPL(arm_pm_restart);
 
+void arch_cpu_idle_prepare(void)
+{
+	local_fiq_enable();
+}
 
 /*
  * This is our default idle handler.
  */
-static void default_idle(void)
+void arch_cpu_idle(void)
 {
 	/*
 	 * This should do all the clock switching and wait for interrupt
@@ -97,47 +102,12 @@ static void default_idle(void)
 	local_irq_enable();
 }
 
-void (*pm_idle)(void) = default_idle;
-EXPORT_SYMBOL_GPL(pm_idle);
-
-/*
- * The idle thread, has rather strange semantics for calling pm_idle,
- * but this is what x86 does and we need to do the same, so that
- * things like cpuidle get called in the same way.  The only difference
- * is that we always respect 'hlt_counter' to prevent low power idle.
- */
-void cpu_idle(void)
+#ifdef CONFIG_HOTPLUG_CPU
+void arch_cpu_idle_dead(void)
 {
-	local_fiq_enable();
-
-	/* endless idle loop with no priority at all */
-	while (1) {
-		tick_nohz_idle_enter();
-		rcu_idle_enter();
-		while (!need_resched()) {
-			/*
-			 * We need to disable interrupts here to ensure
-			 * we don't miss a wakeup call.
-			 */
-			local_irq_disable();
-			if (!need_resched()) {
-				stop_critical_timings();
-				pm_idle();
-				start_critical_timings();
-				/*
-				 * pm_idle functions should always return
-				 * with IRQs enabled.
-				 */
-				WARN_ON(irqs_disabled());
-			} else {
-				local_irq_enable();
-			}
-		}
-		rcu_idle_exit();
-		tick_nohz_idle_exit();
-		schedule_preempt_disabled();
-	}
+       cpu_die();
 }
+#endif
 
 void machine_shutdown(void)
 {
@@ -168,8 +138,8 @@ void machine_restart(char *cmd)
 	local_fiq_disable();
 
 	/* Now call the architecture specific reboot code. */
-	if (pm_restart)
-		pm_restart(cmd);
+	if (arm_pm_restart)
+		arm_pm_restart(reboot_mode, cmd);
 
 	/*
 	 * Whoops - the architecture was unable to reboot.
@@ -180,19 +150,26 @@ void machine_restart(char *cmd)
 
 void __show_regs(struct pt_regs *regs)
 {
-	int i;
+	int i, top_reg;
+	u64 lr, sp;
 
-	printk("CPU: %d    %s  (%s %.*s)\n",
-		raw_smp_processor_id(), print_tainted(),
-		init_utsname()->release,
-		(int)strcspn(init_utsname()->version, " "),
-		init_utsname()->version);
+	if (compat_user_mode(regs)) {
+		lr = regs->compat_lr;
+		sp = regs->compat_sp;
+		top_reg = 12;
+	} else {
+		lr = regs->regs[30];
+		sp = regs->sp;
+		top_reg = 29;
+	}
+
+	show_regs_print_info(KERN_DEFAULT);
 	print_symbol("PC is at %s\n", instruction_pointer(regs));
-	print_symbol("LR is at %s\n", regs->regs[30]);
+	print_symbol("LR is at %s\n", lr);
 	printk("pc : [<%016llx>] lr : [<%016llx>] pstate: %08llx\n",
-	       regs->pc, regs->regs[30], regs->pstate);
-	printk("sp : %016llx\n", regs->sp);
-	for (i = 29; i >= 0; i--) {
+	       regs->pc, lr, regs->pstate);
+	printk("sp : %016llx\n", sp);
+	for (i = top_reg; i >= 0; i--) {
 		printk("x%-2d: %016llx ", i, regs->regs[i]);
 		if (i % 2 == 0)
 			printk("\n");
@@ -203,7 +180,6 @@ void __show_regs(struct pt_regs *regs)
 void show_regs(struct pt_regs * regs)
 {
 	printk("\n");
-	printk("Pid: %d, comm: %20s\n", task_pid_nr(current), current->comm);
 	__show_regs(regs);
 }
 
@@ -234,33 +210,46 @@ int arch_dup_task_struct(struct task_struct *dst, struct task_struct *src)
 asmlinkage void ret_from_fork(void) asm("ret_from_fork");
 
 int copy_thread(unsigned long clone_flags, unsigned long stack_start,
-		unsigned long stk_sz, struct task_struct *p,
-		struct pt_regs *regs)
+		unsigned long stk_sz, struct task_struct *p)
 {
 	struct pt_regs *childregs = task_pt_regs(p);
 	unsigned long tls = p->thread.tp_value;
 
-	*childregs = *regs;
-	childregs->regs[0] = 0;
-
-	if (is_compat_thread(task_thread_info(p)))
-		childregs->compat_sp = stack_start;
-	else {
-		/*
-		 * Read the current TLS pointer from tpidr_el0 as it may be
-		 * out-of-sync with the saved value.
-		 */
-		asm("mrs %0, tpidr_el0" : "=r" (tls));
-		childregs->sp = stack_start;
-	}
-
 	memset(&p->thread.cpu_context, 0, sizeof(struct cpu_context));
-	p->thread.cpu_context.sp = (unsigned long)childregs;
-	p->thread.cpu_context.pc = (unsigned long)ret_from_fork;
 
-	/* If a TLS pointer was passed to clone, use that for the new thread. */
-	if (clone_flags & CLONE_SETTLS)
-		tls = regs->regs[3];
+	if (likely(!(p->flags & PF_KTHREAD))) {
+		*childregs = *current_pt_regs();
+		childregs->regs[0] = 0;
+		if (is_compat_thread(task_thread_info(p))) {
+			if (stack_start)
+				childregs->compat_sp = stack_start;
+		} else {
+			/*
+			 * Read the current TLS pointer from tpidr_el0 as it may be
+			 * out-of-sync with the saved value.
+			 */
+			asm("mrs %0, tpidr_el0" : "=r" (tls));
+			if (stack_start) {
+				/* 16-byte aligned stack mandatory on AArch64 */
+				if (stack_start & 15)
+					return -EINVAL;
+				childregs->sp = stack_start;
+			}
+		}
+		/*
+		 * If a TLS pointer was passed to clone (4th argument), use it
+		 * for the new thread.
+		 */
+		if (clone_flags & CLONE_SETTLS)
+			tls = childregs->regs[3];
+	} else {
+		memset(childregs, 0, sizeof(struct pt_regs));
+		childregs->pstate = PSR_MODE_EL1h;
+		p->thread.cpu_context.x19 = stack_start;
+		p->thread.cpu_context.x20 = stk_sz;
+	}
+	p->thread.cpu_context.pc = (unsigned long)ret_from_fork;
+	p->thread.cpu_context.sp = (unsigned long)childregs;
 	p->thread.tp_value = tls;
 
 	ptrace_hw_copy_thread(p);
@@ -302,67 +291,19 @@ struct task_struct *__switch_to(struct task_struct *prev,
 	fpsimd_thread_switch(next);
 	tls_thread_switch(next);
 	hw_breakpoint_thread_switch(next);
+	contextidr_thread_switch(next);
+
+	/*
+	 * Complete any pending TLB or cache maintenance on this CPU in case
+	 * the thread migrates to a different CPU.
+	 */
+	dsb();
 
 	/* the actual thread switch */
 	last = cpu_switch_to(prev, next);
 
 	return last;
 }
-
-/*
- * Fill in the task's elfregs structure for a core dump.
- */
-int dump_task_regs(struct task_struct *t, elf_gregset_t *elfregs)
-{
-	elf_core_copy_regs(elfregs, task_pt_regs(t));
-	return 1;
-}
-
-/*
- * fill in the fpe structure for a core dump...
- */
-int dump_fpu (struct pt_regs *regs, struct user_fp *fp)
-{
-	return 0;
-}
-EXPORT_SYMBOL(dump_fpu);
-
-/*
- * Shuffle the argument into the correct register before calling the
- * thread function.  x1 is the thread argument, x2 is the pointer to
- * the thread function, and x3 points to the exit function.
- */
-extern void kernel_thread_helper(void);
-asm(	".section .text\n"
-"	.align\n"
-"	.type	kernel_thread_helper, #function\n"
-"kernel_thread_helper:\n"
-"	mov	x0, x1\n"
-"	mov	x30, x3\n"
-"	br	x2\n"
-"	.size	kernel_thread_helper, . - kernel_thread_helper\n"
-"	.previous");
-
-#define kernel_thread_exit	do_exit
-
-/*
- * Create a kernel thread.
- */
-pid_t kernel_thread(int (*fn)(void *), void *arg, unsigned long flags)
-{
-	struct pt_regs regs;
-
-	memset(&regs, 0, sizeof(regs));
-
-	regs.regs[1] = (unsigned long)arg;
-	regs.regs[2] = (unsigned long)fn;
-	regs.regs[3] = (unsigned long)kernel_thread_exit;
-	regs.pc = (unsigned long)kernel_thread_helper;
-	regs.pstate = PSR_MODE_EL1h;
-
-	return do_fork(flags|CLONE_VM|CLONE_UNTRACED, 0, &regs, 0, NULL, NULL);
-}
-EXPORT_SYMBOL(kernel_thread);
 
 unsigned long get_wchan(struct task_struct *p)
 {

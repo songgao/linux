@@ -46,7 +46,6 @@ static irqreturn_t iio_simple_dummy_trigger_h(int irq, void *p)
 {
 	struct iio_poll_func *pf = p;
 	struct iio_dev *indio_dev = pf->indio_dev;
-	struct iio_buffer *buffer = indio_dev->buffer;
 	int len = 0;
 	u16 *data;
 
@@ -76,18 +75,15 @@ static irqreturn_t iio_simple_dummy_trigger_h(int irq, void *p)
 		     i < bitmap_weight(indio_dev->active_scan_mask,
 				       indio_dev->masklength);
 		     i++, j++) {
-			j = find_next_bit(buffer->scan_mask,
+			j = find_next_bit(indio_dev->active_scan_mask,
 					  indio_dev->masklength, j);
 			/* random access read from the 'device' */
 			data[i] = fakedata[j];
 			len += 2;
 		}
 	}
-	/* Store the timestamp at an 8 byte aligned offset */
-	if (indio_dev->scan_timestamp)
-		*(s64 *)((u8 *)data + ALIGN(len, sizeof(s64)))
-			= iio_get_time_ns();
-	iio_push_to_buffer(buffer, (u8 *)data);
+
+	iio_push_to_buffers_with_timestamp(indio_dev, data, iio_get_time_ns());
 
 	kfree(data);
 
@@ -102,14 +98,6 @@ done:
 }
 
 static const struct iio_buffer_setup_ops iio_simple_dummy_buffer_setup_ops = {
-	/*
-	 * iio_sw_buffer_preenable:
-	 * Generic function for equal sized ring elements + 64 bit timestamp
-	 * Assumes that any combination of channels can be enabled.
-	 * Typically replaced to implement restrictions on what combinations
-	 * can be captured (hardware scan modes).
-	 */
-	.preenable = &iio_sw_buffer_preenable,
 	/*
 	 * iio_triggered_buffer_postenable:
 	 * Generic function that simply attaches the pollfunc to the trigger.
@@ -139,7 +127,7 @@ int iio_simple_dummy_configure_buffer(struct iio_dev *indio_dev,
 		goto error_ret;
 	}
 
-	indio_dev->buffer = buffer;
+	iio_device_attach_buffer(indio_dev, buffer);
 
 	/* Enable timestamps by default */
 	buffer->scan_timestamp = true;
@@ -156,7 +144,7 @@ int iio_simple_dummy_configure_buffer(struct iio_dev *indio_dev,
 	 * occurs, this function is run. Typically this grabs data
 	 * from the device.
 	 *
-	 * NULL for the top half. This is normally implemented only if we
+	 * NULL for the bottom half. This is normally implemented only if we
 	 * either want to ping a capture now pin (no sleeping) or grab
 	 * a timestamp as close as possible to a data ready trigger firing.
 	 *

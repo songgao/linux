@@ -225,10 +225,14 @@ struct uvc_format_desc {
  * always be accessed with the UVC_ENTITY_* macros and never directly.
  */
 
+#define UVC_ENTITY_FLAG_DEFAULT		(1 << 0)
+
 struct uvc_entity {
 	struct list_head list;		/* Entity as part of a UVC device. */
 	struct list_head chain;		/* Entity as part of a video device
 					 * chain. */
+	unsigned int flags;
+
 	__u8 id;
 	__u16 type;
 	char name[64];
@@ -371,6 +375,9 @@ struct uvc_video_chain {
 	struct uvc_entity *selector;		/* Selector unit */
 
 	struct mutex ctrl_mutex;		/* Protects ctrl.info */
+
+	struct v4l2_prio_state prio;		/* V4L2 priority state */
+	u32 caps;				/* V4L2 chain-wide caps */
 };
 
 struct uvc_stats_frame {
@@ -436,6 +443,7 @@ struct uvc_streaming {
 	struct uvc_format *format;
 
 	struct uvc_streaming_control ctrl;
+	struct uvc_format *def_format;
 	struct uvc_format *cur_format;
 	struct uvc_frame *cur_frame;
 	/* Protect access to ctrl, cur_format, cur_frame and hardware video
@@ -506,7 +514,8 @@ struct uvc_device {
 	char name[32];
 
 	enum uvc_device_state state;
-	atomic_t users;
+	struct mutex lock;		/* Protects users */
+	unsigned int users;
 	atomic_t nmappings;
 
 	/* Video control interface */
@@ -652,10 +661,8 @@ void uvc_video_clock_update(struct uvc_streaming *stream,
 /* Status */
 extern int uvc_status_init(struct uvc_device *dev);
 extern void uvc_status_cleanup(struct uvc_device *dev);
-extern int uvc_status_start(struct uvc_device *dev);
+extern int uvc_status_start(struct uvc_device *dev, gfp_t flags);
 extern void uvc_status_stop(struct uvc_device *dev);
-extern int uvc_status_suspend(struct uvc_device *dev);
-extern int uvc_status_resume(struct uvc_device *dev);
 
 /* Controls */
 extern const struct v4l2_subscribed_event_ops uvc_ctrl_sub_ev_ops;

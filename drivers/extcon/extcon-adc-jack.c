@@ -14,6 +14,7 @@
  *
  */
 
+#include <linux/module.h>
 #include <linux/slab.h>
 #include <linux/device.h>
 #include <linux/platform_device.h>
@@ -26,16 +27,16 @@
 
 /**
  * struct adc_jack_data - internal data for adc_jack device driver
- * @edev        - extcon device.
- * @cable_names - list of supported cables.
- * @num_cables  - size of cable_names.
- * @adc_conditions       - list of adc value conditions.
- * @num_conditions       - size of adc_conditions.
- * @irq         - irq number of attach/detach event (0 if not exist).
- * @handling_delay      - interrupt handler will schedule extcon event
- *                      handling at handling_delay jiffies.
- * @handler     - extcon event handler called by interrupt handler.
- * @chan       - iio channel being queried.
+ * @edev:		extcon device.
+ * @cable_names:	list of supported cables.
+ * @num_cables:		size of cable_names.
+ * @adc_conditions:	list of adc value conditions.
+ * @num_conditions:	size of adc_conditions.
+ * @irq:		irq number of attach/detach event (0 if not exist).
+ * @handling_delay:	interrupt handler will schedule extcon event
+ *			handling at handling_delay jiffies.
+ * @handler:		extcon event handler called by interrupt handler.
+ * @chan:		iio channel being queried.
  */
 struct adc_jack_data {
 	struct extcon_dev edev;
@@ -63,7 +64,7 @@ static void adc_jack_handler(struct work_struct *work)
 
 	ret = iio_read_channel_raw(data->chan, &adc_val);
 	if (ret < 0) {
-		dev_err(data->edev.dev, "read channel() error: %d\n", ret);
+		dev_err(&data->edev.dev, "read channel() error: %d\n", ret);
 		return;
 	}
 
@@ -86,14 +87,15 @@ static irqreturn_t adc_jack_irq_thread(int irq, void *_data)
 {
 	struct adc_jack_data *data = _data;
 
-	schedule_delayed_work(&data->handler, data->handling_delay);
+	queue_delayed_work(system_power_efficient_wq,
+			   &data->handler, data->handling_delay);
 	return IRQ_HANDLED;
 }
 
-static int __devinit adc_jack_probe(struct platform_device *pdev)
+static int adc_jack_probe(struct platform_device *pdev)
 {
 	struct adc_jack_data *data;
-	struct adc_jack_pdata *pdata = pdev->dev.platform_data;
+	struct adc_jack_pdata *pdata = dev_get_platdata(&pdev->dev);
 	int i, err = 0;
 
 	data = devm_kzalloc(&pdev->dev, sizeof(*data), GFP_KERNEL);
@@ -108,6 +110,7 @@ static int __devinit adc_jack_probe(struct platform_device *pdev)
 		goto out;
 	}
 
+	data->edev.dev.parent = &pdev->dev;
 	data->edev.supported_cable = pdata->cable_names;
 
 	/* Check the length of array and set num_cables */
@@ -134,8 +137,7 @@ static int __devinit adc_jack_probe(struct platform_device *pdev)
 		;
 	data->num_conditions = i;
 
-	data->chan = iio_channel_get(dev_name(&pdev->dev),
-			pdata->consumer_channel);
+	data->chan = iio_channel_get(&pdev->dev, pdata->consumer_channel);
 	if (IS_ERR(data->chan)) {
 		err = PTR_ERR(data->chan);
 		goto out;
@@ -147,7 +149,7 @@ static int __devinit adc_jack_probe(struct platform_device *pdev)
 
 	platform_set_drvdata(pdev, data);
 
-	err = extcon_dev_register(&data->edev, &pdev->dev);
+	err = extcon_dev_register(&data->edev);
 	if (err)
 		goto out;
 
@@ -161,13 +163,12 @@ static int __devinit adc_jack_probe(struct platform_device *pdev)
 	err = request_any_context_irq(data->irq, adc_jack_irq_thread,
 			pdata->irq_flags, pdata->name, data);
 
-	if (err) {
+	if (err < 0) {
 		dev_err(&pdev->dev, "error: irq %d\n", data->irq);
-		err = -EINVAL;
 		goto err_irq;
 	}
 
-	goto out;
+	return 0;
 
 err_irq:
 	extcon_dev_unregister(&data->edev);
@@ -175,7 +176,7 @@ out:
 	return err;
 }
 
-static int __devexit adc_jack_remove(struct platform_device *pdev)
+static int adc_jack_remove(struct platform_device *pdev)
 {
 	struct adc_jack_data *data = platform_get_drvdata(pdev);
 
@@ -188,7 +189,7 @@ static int __devexit adc_jack_remove(struct platform_device *pdev)
 
 static struct platform_driver adc_jack_driver = {
 	.probe          = adc_jack_probe,
-	.remove         = __devexit_p(adc_jack_remove),
+	.remove         = adc_jack_remove,
 	.driver         = {
 		.name   = "adc-jack",
 		.owner  = THIS_MODULE,
@@ -196,3 +197,7 @@ static struct platform_driver adc_jack_driver = {
 };
 
 module_platform_driver(adc_jack_driver);
+
+MODULE_AUTHOR("MyungJoo Ham <myungjoo.ham@samsung.com>");
+MODULE_DESCRIPTION("ADC Jack extcon driver");
+MODULE_LICENSE("GPL v2");

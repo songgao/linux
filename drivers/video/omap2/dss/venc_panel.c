@@ -107,19 +107,19 @@ static int venc_panel_probe(struct omap_dss_device *dssdev)
 
 	dssdev->panel.timings = default_timings;
 
-	return device_create_file(&dssdev->dev, &dev_attr_output_type);
+	return device_create_file(dssdev->dev, &dev_attr_output_type);
 }
 
 static void venc_panel_remove(struct omap_dss_device *dssdev)
 {
-	device_remove_file(&dssdev->dev, &dev_attr_output_type);
+	device_remove_file(dssdev->dev, &dev_attr_output_type);
 }
 
 static int venc_panel_enable(struct omap_dss_device *dssdev)
 {
 	int r;
 
-	dev_dbg(&dssdev->dev, "venc_panel_enable\n");
+	dev_dbg(dssdev->dev, "venc_panel_enable\n");
 
 	mutex_lock(&venc_panel.lock);
 
@@ -150,18 +150,12 @@ err:
 
 static void venc_panel_disable(struct omap_dss_device *dssdev)
 {
-	dev_dbg(&dssdev->dev, "venc_panel_disable\n");
+	dev_dbg(dssdev->dev, "venc_panel_disable\n");
 
 	mutex_lock(&venc_panel.lock);
 
 	if (dssdev->state == OMAP_DSS_DISPLAY_DISABLED)
 		goto end;
-
-	if (dssdev->state == OMAP_DSS_DISPLAY_SUSPENDED) {
-		/* suspended is the same as disabled with venc */
-		dssdev->state = OMAP_DSS_DISPLAY_DISABLED;
-		goto end;
-	}
 
 	omapdss_venc_display_disable(dssdev);
 
@@ -170,21 +164,10 @@ end:
 	mutex_unlock(&venc_panel.lock);
 }
 
-static int venc_panel_suspend(struct omap_dss_device *dssdev)
-{
-	venc_panel_disable(dssdev);
-	return 0;
-}
-
-static int venc_panel_resume(struct omap_dss_device *dssdev)
-{
-	return venc_panel_enable(dssdev);
-}
-
 static void venc_panel_set_timings(struct omap_dss_device *dssdev,
 		struct omap_video_timings *timings)
 {
-	dev_dbg(&dssdev->dev, "venc_panel_set_timings\n");
+	dev_dbg(dssdev->dev, "venc_panel_set_timings\n");
 
 	mutex_lock(&venc_panel.lock);
 
@@ -197,21 +180,21 @@ static void venc_panel_set_timings(struct omap_dss_device *dssdev,
 static int venc_panel_check_timings(struct omap_dss_device *dssdev,
 		struct omap_video_timings *timings)
 {
-	dev_dbg(&dssdev->dev, "venc_panel_check_timings\n");
+	dev_dbg(dssdev->dev, "venc_panel_check_timings\n");
 
 	return omapdss_venc_check_timings(dssdev, timings);
 }
 
 static u32 venc_panel_get_wss(struct omap_dss_device *dssdev)
 {
-	dev_dbg(&dssdev->dev, "venc_panel_get_wss\n");
+	dev_dbg(dssdev->dev, "venc_panel_get_wss\n");
 
 	return omapdss_venc_get_wss(dssdev);
 }
 
 static int venc_panel_set_wss(struct omap_dss_device *dssdev, u32 wss)
 {
-	dev_dbg(&dssdev->dev, "venc_panel_set_wss\n");
+	dev_dbg(dssdev->dev, "venc_panel_set_wss\n");
 
 	return omapdss_venc_set_wss(dssdev, wss);
 }
@@ -222,8 +205,6 @@ static struct omap_dss_driver venc_driver = {
 
 	.enable		= venc_panel_enable,
 	.disable	= venc_panel_disable,
-	.suspend	= venc_panel_suspend,
-	.resume		= venc_panel_resume,
 
 	.get_resolution	= omapdss_default_get_resolution,
 	.get_recommended_bpp = omapdss_default_get_recommended_bpp,

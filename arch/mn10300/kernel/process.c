@@ -37,12 +37,6 @@
 #include "internal.h"
 
 /*
- * power management idle function, if any..
- */
-void (*pm_idle)(void);
-EXPORT_SYMBOL(pm_idle);
-
-/*
  * return saved PC of a blocked thread.
  */
 unsigned long thread_saved_pc(struct task_struct *tsk)
@@ -56,78 +50,19 @@ unsigned long thread_saved_pc(struct task_struct *tsk)
 void (*pm_power_off)(void);
 EXPORT_SYMBOL(pm_power_off);
 
-#if !defined(CONFIG_SMP) || defined(CONFIG_HOTPLUG_CPU)
-/*
- * we use this if we don't have any better idle routine
- */
-static void default_idle(void)
-{
-	local_irq_disable();
-	if (!need_resched())
-		safe_halt();
-	else
-		local_irq_enable();
-}
-
-#else /* !CONFIG_SMP || CONFIG_HOTPLUG_CPU  */
 /*
  * On SMP it's slightly faster (but much more power-consuming!)
  * to poll the ->work.need_resched flag instead of waiting for the
  * cross-CPU IPI to arrive. Use this option with caution.
+ *
+ * tglx: No idea why this depends on HOTPLUG_CPU !?!
  */
-static inline void poll_idle(void)
+#if !defined(CONFIG_SMP) || defined(CONFIG_HOTPLUG_CPU)
+void arch_cpu_idle(void)
 {
-	int oldval;
-
-	local_irq_enable();
-
-	/*
-	 * Deal with another CPU just having chosen a thread to
-	 * run here:
-	 */
-	oldval = test_and_clear_thread_flag(TIF_NEED_RESCHED);
-
-	if (!oldval) {
-		set_thread_flag(TIF_POLLING_NRFLAG);
-		while (!need_resched())
-			cpu_relax();
-		clear_thread_flag(TIF_POLLING_NRFLAG);
-	} else {
-		set_need_resched();
-	}
+	safe_halt();
 }
-#endif /* !CONFIG_SMP || CONFIG_HOTPLUG_CPU */
-
-/*
- * the idle thread
- * - there's no useful work to be done, so just try to conserve power and have
- *   a low exit latency (ie sit in a loop waiting for somebody to say that
- *   they'd like to reschedule)
- */
-void cpu_idle(void)
-{
-	/* endless idle loop with no priority at all */
-	for (;;) {
-		rcu_idle_enter();
-		while (!need_resched()) {
-			void (*idle)(void);
-
-			smp_rmb();
-			idle = pm_idle;
-			if (!idle) {
-#if defined(CONFIG_SMP) && !defined(CONFIG_HOTPLUG_CPU)
-				idle = poll_idle;
-#else  /* CONFIG_SMP && !CONFIG_HOTPLUG_CPU */
-				idle = default_idle;
-#endif /* CONFIG_SMP && !CONFIG_HOTPLUG_CPU */
-			}
-			idle();
-		}
-		rcu_idle_exit();
-
-		schedule_preempt_disabled();
-	}
-}
+#endif
 
 void release_segments(struct mm_struct *mm)
 {
@@ -162,6 +97,7 @@ void machine_power_off(void)
 
 void show_regs(struct pt_regs *regs)
 {
+	show_regs_print_info(KERN_DEFAULT);
 }
 
 /*
@@ -206,7 +142,7 @@ int arch_dup_task_struct(struct task_struct *dst, struct task_struct *src)
  */
 int copy_thread(unsigned long clone_flags,
 		unsigned long c_usp, unsigned long ustk_size,
-		struct task_struct *p, struct pt_regs *kregs)
+		struct task_struct *p)
 {
 	struct thread_info *ti = task_thread_info(p);
 	struct pt_regs *c_regs;
@@ -227,7 +163,7 @@ int copy_thread(unsigned long clone_flags,
 	p->thread.wchan	= p->thread.pc;
 	p->thread.usp	= c_usp;
 
-	if (unlikely(!kregs)) {
+	if (unlikely(p->flags & PF_KTHREAD)) {
 		memset(c_regs, 0, sizeof(struct pt_regs));
 		c_regs->a0 = c_usp; /* function */
 		c_regs->d0 = ustk_size; /* argument */
@@ -236,8 +172,9 @@ int copy_thread(unsigned long clone_flags,
 		p->thread.pc	= (unsigned long) ret_from_kernel_thread;
 		return 0;
 	}
-	*c_regs = *kregs;
-	c_regs->sp = c_usp;
+	*c_regs = *current_pt_regs();
+	if (c_usp)
+		c_regs->sp = c_usp;
 	c_regs->epsw &= ~EPSW_FE; /* my FPU */
 
 	/* the new TLS pointer is passed in as arg #5 to sys_clone() */
@@ -247,30 +184,6 @@ int copy_thread(unsigned long clone_flags,
 	p->thread.pc	= (unsigned long) ret_from_fork;
 
 	return 0;
-}
-
-/*
- * clone a process
- * - tlsptr is retrieved by copy_thread() from current_frame()->d3
- */
-asmlinkage long sys_clone(unsigned long clone_flags, unsigned long newsp,
-			  int __user *parent_tidptr, int __user *child_tidptr,
-			  int __user *tlsptr)
-{
-	return do_fork(clone_flags, newsp ?: current_frame()->sp,
-		       current_frame(), 0, parent_tidptr, child_tidptr);
-}
-
-asmlinkage long sys_fork(void)
-{
-	return do_fork(SIGCHLD, current_frame()->sp,
-		       current_frame(), 0, NULL, NULL);
-}
-
-asmlinkage long sys_vfork(void)
-{
-	return do_fork(CLONE_VFORK | CLONE_VM | SIGCHLD, current_frame()->sp,
-		       current_frame(), 0, NULL, NULL);
 }
 
 unsigned long get_wchan(struct task_struct *p)

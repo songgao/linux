@@ -17,12 +17,7 @@
     but WITHOUT ANY WARRANTY; without even the implied warranty of
     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
     GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program; if not, write to the Free Software
-    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
-
-************************************************************************/
+*/
 
 #ifndef _COMEDI_FC_H
 #define _COMEDI_FC_H
@@ -35,7 +30,7 @@ extern unsigned int cfc_write_array_to_buffer(struct comedi_subdevice *subd,
 					      unsigned int num_bytes);
 
 static inline unsigned int cfc_write_to_buffer(struct comedi_subdevice *subd,
-					       short data)
+					       unsigned short data)
 {
 	return cfc_write_array_to_buffer(subd, &data, sizeof(data));
 };
@@ -102,6 +97,50 @@ static inline int cfc_check_trigger_is_unique(unsigned int src)
 	/* this test is true if more than one _src bit is set */
 	if ((src & (src - 1)) != 0)
 		return -EINVAL;
+	return 0;
+}
+
+/**
+ * cfc_check_trigger_arg_is() - trivially validate a trigger argument
+ * @arg: pointer to the trigger arg to validate
+ * @val: the value the argument should be
+ */
+static inline int cfc_check_trigger_arg_is(unsigned int *arg, unsigned int val)
+{
+	if (*arg != val) {
+		*arg = val;
+		return -EINVAL;
+	}
+	return 0;
+}
+
+/**
+ * cfc_check_trigger_arg_min() - trivially validate a trigger argument
+ * @arg: pointer to the trigger arg to validate
+ * @val: the minimum value the argument should be
+ */
+static inline int cfc_check_trigger_arg_min(unsigned int *arg,
+					    unsigned int val)
+{
+	if (*arg < val) {
+		*arg = val;
+		return -EINVAL;
+	}
+	return 0;
+}
+
+/**
+ * cfc_check_trigger_arg_max() - trivially validate a trigger argument
+ * @arg: pointer to the trigger arg to validate
+ * @val: the maximum value the argument should be
+ */
+static inline int cfc_check_trigger_arg_max(unsigned int *arg,
+					    unsigned int val)
+{
+	if (*arg > val) {
+		*arg = val;
+		return -EINVAL;
+	}
 	return 0;
 }
 

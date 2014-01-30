@@ -752,8 +752,8 @@ void set_transfer(struct ngene_channel *chan, int state)
 		if (chan->mode & NGENE_IO_TSIN)
 			chan->pBufferExchange = tsin_exchange;
 		spin_unlock_irq(&chan->state_lock);
-	} else
-		;/* printk(KERN_INFO DEVICE_NAME ": lock=%08x\n",
+	}
+		/* else printk(KERN_INFO DEVICE_NAME ": lock=%08x\n",
 			   ngreadl(0x9310)); */
 
 	ret = ngene_command_stream_control(dev, chan->number,
@@ -1622,7 +1622,7 @@ static void ngene_unlink(struct ngene *dev)
 
 void ngene_shutdown(struct pci_dev *pdev)
 {
-	struct ngene *dev = (struct ngene *)pci_get_drvdata(pdev);
+	struct ngene *dev = pci_get_drvdata(pdev);
 
 	if (!dev || !shutdown_workaround)
 		return;
@@ -1636,7 +1636,7 @@ void ngene_shutdown(struct pci_dev *pdev)
 /* device probe/remove calls ************************************************/
 /****************************************************************************/
 
-void __devexit ngene_remove(struct pci_dev *pdev)
+void ngene_remove(struct pci_dev *pdev)
 {
 	struct ngene *dev = pci_get_drvdata(pdev);
 	int i;
@@ -1648,12 +1648,10 @@ void __devexit ngene_remove(struct pci_dev *pdev)
 		cxd_detach(dev);
 	ngene_stop(dev);
 	ngene_release_buffers(dev);
-	pci_set_drvdata(pdev, NULL);
 	pci_disable_device(pdev);
 }
 
-int __devinit ngene_probe(struct pci_dev *pci_dev,
-			  const struct pci_device_id *id)
+int ngene_probe(struct pci_dev *pci_dev, const struct pci_device_id *id)
 {
 	struct ngene *dev;
 	int stat = 0;
@@ -1691,7 +1689,8 @@ int __devinit ngene_probe(struct pci_dev *pci_dev,
 	dev->i2c_current_bus = -1;
 
 	/* Register DVB adapters and devices for both channels */
-	if (init_channels(dev) < 0)
+	stat = init_channels(dev);
+	if (stat < 0)
 		goto fail2;
 
 	return 0;
@@ -1702,6 +1701,5 @@ fail1:
 	ngene_release_buffers(dev);
 fail0:
 	pci_disable_device(pci_dev);
-	pci_set_drvdata(pci_dev, NULL);
 	return stat;
 }

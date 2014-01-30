@@ -412,7 +412,7 @@ static int pcifront_claim_resource(struct pci_dev *dev, void *data)
 	return 0;
 }
 
-static int __devinit pcifront_scan_bus(struct pcifront_device *pdev,
+static int pcifront_scan_bus(struct pcifront_device *pdev,
 				unsigned int domain, unsigned int bus,
 				struct pci_bus *b)
 {
@@ -441,7 +441,7 @@ static int __devinit pcifront_scan_bus(struct pcifront_device *pdev,
 	return 0;
 }
 
-static int __devinit pcifront_scan_root(struct pcifront_device *pdev,
+static int pcifront_scan_root(struct pcifront_device *pdev,
 				 unsigned int domain, unsigned int bus)
 {
 	struct pci_bus *b;
@@ -503,7 +503,7 @@ err_out:
 	return err;
 }
 
-static int __devinit pcifront_rescan_root(struct pcifront_device *pdev,
+static int pcifront_rescan_root(struct pcifront_device *pdev,
 				   unsigned int domain, unsigned int bus)
 {
 	int err;
@@ -678,10 +678,9 @@ static int pcifront_connect_and_init_dma(struct pcifront_device *pdev)
 	if (!pcifront_dev) {
 		dev_info(&pdev->xdev->dev, "Installing PCI frontend\n");
 		pcifront_dev = pdev;
-	} else {
-		dev_err(&pdev->xdev->dev, "PCI frontend already installed!\n");
+	} else
 		err = -EEXIST;
-	}
+
 	spin_unlock(&pcifront_dev_lock);
 
 	if (!err && !swiotlb_nr_tbl()) {
@@ -834,7 +833,7 @@ out:
 	return err;
 }
 
-static int __devinit pcifront_try_connect(struct pcifront_device *pdev)
+static int pcifront_try_connect(struct pcifront_device *pdev)
 {
 	int err = -EFAULT;
 	int i, num_roots, len;
@@ -848,7 +847,7 @@ static int __devinit pcifront_try_connect(struct pcifront_device *pdev)
 		goto out;
 
 	err = pcifront_connect_and_init_dma(pdev);
-	if (err) {
+	if (err && err != -EEXIST) {
 		xenbus_dev_fatal(pdev->xdev, err,
 				 "Error setting up PCI Frontend");
 		goto out;
@@ -924,7 +923,7 @@ out:
 	return err;
 }
 
-static int __devinit pcifront_attach_devices(struct pcifront_device *pdev)
+static int pcifront_attach_devices(struct pcifront_device *pdev)
 {
 	int err = -EFAULT;
 	int i, num_roots, len;
@@ -1068,13 +1067,16 @@ static void __init_refok pcifront_backend_changed(struct xenbus_device *xdev,
 	case XenbusStateInitialising:
 	case XenbusStateInitWait:
 	case XenbusStateInitialised:
-	case XenbusStateClosed:
 		break;
 
 	case XenbusStateConnected:
 		pcifront_try_connect(pdev);
 		break;
 
+	case XenbusStateClosed:
+		if (xdev->state == XenbusStateClosed)
+			break;
+		/* Missed the backend's CLOSING state -- fallthrough */
 	case XenbusStateClosing:
 		dev_warn(&xdev->dev, "backend going away!\n");
 		pcifront_try_disconnect(pdev);

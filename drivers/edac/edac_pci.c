@@ -358,11 +358,9 @@ int edac_pci_add_device(struct edac_pci_ctl_info *pci, int edac_idx)
 	}
 
 	edac_pci_printk(pci, KERN_INFO,
-			"Giving out device to module '%s' controller '%s':"
-			" DEV '%s' (%s)\n",
-			pci->mod_name,
-			pci->ctl_name,
-			edac_dev_name(pci), edac_op_state_to_string(pci->op_state));
+		"Giving out device to module %s controller %s: DEV %s (%s)\n",
+		pci->mod_name, pci->ctl_name, pci->dev_name,
+		edac_op_state_to_string(pci->op_state));
 
 	mutex_unlock(&edac_pci_ctls_mutex);
 	return 0;
@@ -470,7 +468,8 @@ struct edac_pci_ctl_info *edac_pci_create_generic_ctl(struct device *dev,
 
 	pci->mod_name = mod_name;
 	pci->ctl_name = EDAC_PCI_GENCTL_NAME;
-	pci->edac_check = edac_pci_generic_check;
+	if (edac_op_state == EDAC_OPSTATE_POLL)
+		pci->edac_check = edac_pci_generic_check;
 
 	pdata->edac_idx = edac_pci_idx++;
 

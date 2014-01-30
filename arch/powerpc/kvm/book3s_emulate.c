@@ -22,6 +22,7 @@
 #include <asm/kvm_book3s.h>
 #include <asm/reg.h>
 #include <asm/switch_to.h>
+#include <asm/time.h>
 
 #define OP_19_XOP_RFID		18
 #define OP_19_XOP_RFI		50
@@ -33,6 +34,8 @@
 #define OP_31_XOP_MTSRIN	242
 #define OP_31_XOP_TLBIEL	274
 #define OP_31_XOP_TLBIE		306
+/* Opcode is officially reserved, reuse it as sc 1 when sc 1 doesn't trap */
+#define OP_31_XOP_FAKE_SC1	308
 #define OP_31_XOP_SLBMTE	402
 #define OP_31_XOP_SLBIE		434
 #define OP_31_XOP_SLBIA		498
@@ -83,8 +86,8 @@ static bool spr_allowed(struct kvm_vcpu *vcpu, enum priv_level level)
 	return true;
 }
 
-int kvmppc_core_emulate_op(struct kvm_run *run, struct kvm_vcpu *vcpu,
-                           unsigned int inst, int *advance)
+int kvmppc_core_emulate_op_pr(struct kvm_run *run, struct kvm_vcpu *vcpu,
+			      unsigned int inst, int *advance)
 {
 	int emulated = EMULATE_DONE;
 	int rt = get_rt(inst);
@@ -169,6 +172,34 @@ int kvmppc_core_emulate_op(struct kvm_run *run, struct kvm_vcpu *vcpu,
 			vcpu->arch.mmu.tlbie(vcpu, addr, large);
 			break;
 		}
+#ifdef CONFIG_PPC_BOOK3S_64
+		case OP_31_XOP_FAKE_SC1:
+		{
+			/* SC 1 papr hypercalls */
+			ulong cmd = kvmppc_get_gpr(vcpu, 3);
+			int i;
+
+		        if ((vcpu->arch.shared->msr & MSR_PR) ||
+			    !vcpu->arch.papr_enabled) {
+				emulated = EMULATE_FAIL;
+				break;
+			}
+
+			if (kvmppc_h_pr(vcpu, cmd) == EMULATE_DONE)
+				break;
+
+			run->papr_hcall.nr = cmd;
+			for (i = 0; i < 9; ++i) {
+				ulong gpr = kvmppc_get_gpr(vcpu, 4 + i);
+				run->papr_hcall.args[i] = gpr;
+			}
+
+			run->exit_reason = KVM_EXIT_PAPR_HCALL;
+			vcpu->arch.hcall_needed = 1;
+			emulated = EMULATE_EXIT_USER;
+			break;
+		}
+#endif
 		case OP_31_XOP_EIOIO:
 			break;
 		case OP_31_XOP_SLBMTE:
@@ -236,12 +267,9 @@ int kvmppc_core_emulate_op(struct kvm_run *run, struct kvm_vcpu *vcpu,
 
 			r = kvmppc_st(vcpu, &addr, 32, zeros, true);
 			if ((r == -ENOENT) || (r == -EPERM)) {
-				struct kvmppc_book3s_shadow_vcpu *svcpu;
-
-				svcpu = svcpu_get(vcpu);
 				*advance = 0;
 				vcpu->arch.shared->dar = vaddr;
-				svcpu->fault_dar = vaddr;
+				vcpu->arch.fault_dar = vaddr;
 
 				dsisr = DSISR_ISSTORE;
 				if (r == -ENOENT)
@@ -250,8 +278,7 @@ int kvmppc_core_emulate_op(struct kvm_run *run, struct kvm_vcpu *vcpu,
 					dsisr |= DSISR_PROTFAULT;
 
 				vcpu->arch.shared->dsisr = dsisr;
-				svcpu->fault_dsisr = dsisr;
-				svcpu_put(svcpu);
+				vcpu->arch.fault_dsisr = dsisr;
 
 				kvmppc_book3s_queue_irqprio(vcpu,
 					BOOK3S_INTERRUPT_DATA_STORAGE);
@@ -318,7 +345,7 @@ static struct kvmppc_bat *kvmppc_find_bat(struct kvm_vcpu *vcpu, int sprn)
 	return bat;
 }
 
-int kvmppc_core_emulate_mtspr(struct kvm_vcpu *vcpu, int sprn, ulong spr_val)
+int kvmppc_core_emulate_mtspr_pr(struct kvm_vcpu *vcpu, int sprn, ulong spr_val)
 {
 	int emulated = EMULATE_DONE;
 
@@ -395,6 +422,12 @@ int kvmppc_core_emulate_mtspr(struct kvm_vcpu *vcpu, int sprn, ulong spr_val)
 		    (mfmsr() & MSR_HV))
 			vcpu->arch.hflags |= BOOK3S_HFLAG_DCBZ32;
 		break;
+	case SPRN_PURR:
+		to_book3s(vcpu)->purr_offset = spr_val - get_tb();
+		break;
+	case SPRN_SPURR:
+		to_book3s(vcpu)->spurr_offset = spr_val - get_tb();
+		break;
 	case SPRN_GQR0:
 	case SPRN_GQR1:
 	case SPRN_GQR2:
@@ -412,6 +445,7 @@ int kvmppc_core_emulate_mtspr(struct kvm_vcpu *vcpu, int sprn, ulong spr_val)
 	case SPRN_CTRLF:
 	case SPRN_CTRLT:
 	case SPRN_L2CR:
+	case SPRN_DSCR:
 	case SPRN_MMCR0_GEKKO:
 	case SPRN_MMCR1_GEKKO:
 	case SPRN_PMC1_GEKKO:
@@ -419,6 +453,8 @@ int kvmppc_core_emulate_mtspr(struct kvm_vcpu *vcpu, int sprn, ulong spr_val)
 	case SPRN_PMC3_GEKKO:
 	case SPRN_PMC4_GEKKO:
 	case SPRN_WPAR_GEKKO:
+	case SPRN_MSSSR0:
+	case SPRN_DABR:
 		break;
 unprivileged:
 	default:
@@ -432,7 +468,7 @@ unprivileged:
 	return emulated;
 }
 
-int kvmppc_core_emulate_mfspr(struct kvm_vcpu *vcpu, int sprn, ulong *spr_val)
+int kvmppc_core_emulate_mfspr_pr(struct kvm_vcpu *vcpu, int sprn, ulong *spr_val)
 {
 	int emulated = EMULATE_DONE;
 
@@ -483,8 +519,14 @@ int kvmppc_core_emulate_mfspr(struct kvm_vcpu *vcpu, int sprn, ulong *spr_val)
 		*spr_val = to_book3s(vcpu)->hid[5];
 		break;
 	case SPRN_CFAR:
-	case SPRN_PURR:
+	case SPRN_DSCR:
 		*spr_val = 0;
+		break;
+	case SPRN_PURR:
+		*spr_val = get_tb() + to_book3s(vcpu)->purr_offset;
+		break;
+	case SPRN_SPURR:
+		*spr_val = get_tb() + to_book3s(vcpu)->purr_offset;
 		break;
 	case SPRN_GQR0:
 	case SPRN_GQR1:
@@ -509,6 +551,8 @@ int kvmppc_core_emulate_mfspr(struct kvm_vcpu *vcpu, int sprn, ulong *spr_val)
 	case SPRN_PMC3_GEKKO:
 	case SPRN_PMC4_GEKKO:
 	case SPRN_WPAR_GEKKO:
+	case SPRN_MSSSR0:
+	case SPRN_DABR:
 		*spr_val = 0;
 		break;
 	default:

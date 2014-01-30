@@ -371,11 +371,14 @@ static irqreturn_t emmaprp_irq(int irq_emma, void *data)
 	if (!curr_ctx->aborting) {
 		if ((irqst & PRP_INTR_ST_RDERR) ||
 		(irqst & PRP_INTR_ST_CH2WERR)) {
-			pr_err("PrP bus error ocurred, this transfer is probably corrupted\n");
+			pr_err("PrP bus error occurred, this transfer is probably corrupted\n");
 			writel(PRP_CNTL_SWRST, pcdev->base_emma + PRP_CNTL);
 		} else if (irqst & PRP_INTR_ST_CH2B1CI) { /* buffer ready */
 			src_vb = v4l2_m2m_src_buf_remove(curr_ctx->m2m_ctx);
 			dst_vb = v4l2_m2m_dst_buf_remove(curr_ctx->m2m_ctx);
+
+			src_vb->v4l2_buf.timestamp = dst_vb->v4l2_buf.timestamp;
+			src_vb->v4l2_buf.timecode = dst_vb->v4l2_buf.timecode;
 
 			spin_lock_irqsave(&pcdev->irqlock, flags);
 			v4l2_m2m_buf_done(src_vb, VB2_BUF_STATE_DONE);
@@ -763,6 +766,7 @@ static int queue_init(void *priv, struct vb2_queue *src_vq,
 	src_vq->buf_struct_size = sizeof(struct v4l2_m2m_buffer);
 	src_vq->ops = &emmaprp_qops;
 	src_vq->mem_ops = &vb2_dma_contig_memops;
+	src_vq->timestamp_type = V4L2_BUF_FLAG_TIMESTAMP_COPY;
 
 	ret = vb2_queue_init(src_vq);
 	if (ret)
@@ -774,6 +778,7 @@ static int queue_init(void *priv, struct vb2_queue *src_vq,
 	dst_vq->buf_struct_size = sizeof(struct v4l2_m2m_buffer);
 	dst_vq->ops = &emmaprp_qops;
 	dst_vq->mem_ops = &vb2_dma_contig_memops;
+	dst_vq->timestamp_type = V4L2_BUF_FLAG_TIMESTAMP_COPY;
 
 	return vb2_queue_init(dst_vq);
 }
@@ -932,6 +937,7 @@ static int emmaprp_probe(struct platform_device *pdev)
 
 	*vfd = emmaprp_videodev;
 	vfd->lock = &pcdev->dev_mutex;
+	vfd->v4l2_dev = &pcdev->v4l2_dev;
 
 	video_set_drvdata(vfd, pcdev);
 	snprintf(vfd->name, sizeof(vfd->name), "%s", emmaprp_videodev.name);
@@ -941,9 +947,9 @@ static int emmaprp_probe(struct platform_device *pdev)
 
 	platform_set_drvdata(pdev, pcdev);
 
-	pcdev->base_emma = devm_request_and_ioremap(&pdev->dev, res_emma);
-	if (!pcdev->base_emma) {
-		ret = -ENXIO;
+	pcdev->base_emma = devm_ioremap_resource(&pdev->dev, res_emma);
+	if (IS_ERR(pcdev->base_emma)) {
+		ret = PTR_ERR(pcdev->base_emma);
 		goto rel_vdev;
 	}
 
@@ -1013,16 +1019,4 @@ static struct platform_driver emmaprp_pdrv = {
 		.owner	= THIS_MODULE,
 	},
 };
-
-static void __exit emmaprp_exit(void)
-{
-	platform_driver_unregister(&emmaprp_pdrv);
-}
-
-static int __init emmaprp_init(void)
-{
-	return platform_driver_register(&emmaprp_pdrv);
-}
-
-module_init(emmaprp_init);
-module_exit(emmaprp_exit);
+module_platform_driver(emmaprp_pdrv);

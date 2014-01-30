@@ -37,6 +37,7 @@
 #define  BCMA_IOST_BIST_DONE		0x8000
 #define BCMA_RESET_CTL			0x0800
 #define  BCMA_RESET_CTL_RESET		0x0001
+#define BCMA_RESET_ST			0x0804
 
 /* BCMA PCI config space registers. */
 #define BCMA_PCI_PMCSR			0x44
@@ -85,6 +86,9 @@
 							 * (2 ZettaBytes), high 32 bits
 							 */
 
-#define BCMA_SFLASH			0x1c000000
+#define BCMA_SOC_FLASH1			0x1fc00000	/* MIPS Flash Region 1 */
+#define BCMA_SOC_FLASH1_SZ		0x00400000	/* MIPS Size of Flash Region 1 */
+#define BCMA_SOC_FLASH2			0x1c000000	/* Flash Region 2 (region 1 shadowed here) */
+#define BCMA_SOC_FLASH2_SZ		0x02000000	/* Size of Flash Region 2 */
 
 #endif /* LINUX_BCMA_REGS_H_ */

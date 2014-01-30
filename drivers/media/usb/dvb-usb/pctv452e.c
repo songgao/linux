@@ -828,7 +828,7 @@ static struct stb0899_config stb0899_config = {
 	.block_sync_mode = STB0899_SYNC_FORCED, /* ? */
 
 	.xtal_freq       = 27000000,	 /* Assume Hz ? */
-	.inversion       = IQ_SWAP_ON,       /* ? */
+	.inversion       = IQ_SWAP_ON,
 
 	.lo_clk	  = 76500000,
 	.hi_clk	  = 99000000,
@@ -927,7 +927,7 @@ static struct dvb_usb_device_properties pctv452e_properties = {
 
 	.rc.core = {
 		.rc_codes	= RC_MAP_DIB0700_RC5_TABLE,
-		.allowed_protos	= RC_TYPE_UNKNOWN,
+		.allowed_protos	= RC_BIT_UNKNOWN,
 		.rc_query	= pctv452e_rc_query,
 		.rc_interval	= 100,
 	},
@@ -980,7 +980,7 @@ static struct dvb_usb_device_properties tt_connect_s2_3600_properties = {
 
 	.rc.core = {
 		.rc_codes	= RC_MAP_TT_1500,
-		.allowed_protos	= RC_TYPE_UNKNOWN,
+		.allowed_protos	= RC_BIT_UNKNOWN,
 		.rc_query	= pctv452e_rc_query,
 		.rc_interval	= 100,
 	},

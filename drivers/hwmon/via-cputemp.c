@@ -121,7 +121,7 @@ static const struct attribute_group via_cputemp_group = {
 /* Optional attributes */
 static DEVICE_ATTR(cpu0_vid, S_IRUGO, show_cpu_vid, NULL);
 
-static int __devinit via_cputemp_probe(struct platform_device *pdev)
+static int via_cputemp_probe(struct platform_device *pdev)
 {
 	struct via_cputemp_data *data;
 	struct cpuinfo_x86 *c = &cpu_data(pdev->id);
@@ -192,7 +192,7 @@ exit_remove:
 	return err;
 }
 
-static int __devexit via_cputemp_remove(struct platform_device *pdev)
+static int via_cputemp_remove(struct platform_device *pdev)
 {
 	struct via_cputemp_data *data = platform_get_drvdata(pdev);
 
@@ -209,7 +209,7 @@ static struct platform_driver via_cputemp_driver = {
 		.name = DRVNAME,
 	},
 	.probe = via_cputemp_probe,
-	.remove = __devexit_p(via_cputemp_remove),
+	.remove = via_cputemp_remove,
 };
 
 struct pdev_entry {
@@ -221,7 +221,7 @@ struct pdev_entry {
 static LIST_HEAD(pdev_list);
 static DEFINE_MUTEX(pdev_list_mutex);
 
-static int __cpuinit via_cputemp_device_add(unsigned int cpu)
+static int via_cputemp_device_add(unsigned int cpu)
 {
 	int err;
 	struct platform_device *pdev;
@@ -262,7 +262,7 @@ exit:
 	return err;
 }
 
-static void __cpuinit via_cputemp_device_remove(unsigned int cpu)
+static void via_cputemp_device_remove(unsigned int cpu)
 {
 	struct pdev_entry *p;
 
@@ -279,8 +279,8 @@ static void __cpuinit via_cputemp_device_remove(unsigned int cpu)
 	mutex_unlock(&pdev_list_mutex);
 }
 
-static int __cpuinit via_cputemp_cpu_callback(struct notifier_block *nfb,
-				 unsigned long action, void *hcpu)
+static int via_cputemp_cpu_callback(struct notifier_block *nfb,
+				    unsigned long action, void *hcpu)
 {
 	unsigned int cpu = (unsigned long) hcpu;
 

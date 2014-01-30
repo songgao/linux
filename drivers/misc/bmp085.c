@@ -374,7 +374,7 @@ int bmp085_detect(struct device *dev)
 }
 EXPORT_SYMBOL_GPL(bmp085_detect);
 
-static void __init bmp085_get_of_properties(struct bmp085_data *data)
+static void bmp085_get_of_properties(struct bmp085_data *data)
 {
 #ifdef CONFIG_OF
 	struct device_node *np = data->dev->of_node;
@@ -420,7 +420,7 @@ struct regmap_config bmp085_regmap_config = {
 };
 EXPORT_SYMBOL_GPL(bmp085_regmap_config);
 
-__devinit int bmp085_probe(struct device *dev, struct regmap *regmap)
+int bmp085_probe(struct device *dev, struct regmap *regmap)
 {
 	struct bmp085_data *data;
 	int err = 0;

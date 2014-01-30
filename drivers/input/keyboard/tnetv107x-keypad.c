@@ -60,8 +60,8 @@ struct keypad_data {
 	struct clk			*clk;
 	struct device			*dev;
 	spinlock_t			lock;
-	u32				irq_press;
-	u32				irq_release;
+	int				irq_press;
+	int				irq_release;
 	int				rows, cols, row_shift;
 	int				debounce_ms, active_low;
 	u32				prev_keys[3];
@@ -153,7 +153,7 @@ static void keypad_stop(struct input_dev *dev)
 	clk_disable(kp->clk);
 }
 
-static int __devinit keypad_probe(struct platform_device *pdev)
+static int keypad_probe(struct platform_device *pdev)
 {
 	const struct matrix_keypad_platform_data *pdata;
 	const struct matrix_keymap_data *keymap_data;
@@ -296,12 +296,11 @@ error_clk:
 error_map:
 	release_mem_region(kp->res->start, resource_size(kp->res));
 error_res:
-	platform_set_drvdata(pdev, NULL);
 	kfree(kp);
 	return error;
 }
 
-static int __devexit keypad_remove(struct platform_device *pdev)
+static int keypad_remove(struct platform_device *pdev)
 {
 	struct keypad_data *kp = platform_get_drvdata(pdev);
 
@@ -311,7 +310,6 @@ static int __devexit keypad_remove(struct platform_device *pdev)
 	clk_put(kp->clk);
 	iounmap(kp->regs);
 	release_mem_region(kp->res->start, resource_size(kp->res));
-	platform_set_drvdata(pdev, NULL);
 	kfree(kp);
 
 	return 0;
@@ -319,7 +317,7 @@ static int __devexit keypad_remove(struct platform_device *pdev)
 
 static struct platform_driver keypad_driver = {
 	.probe		= keypad_probe,
-	.remove		= __devexit_p(keypad_remove),
+	.remove		= keypad_remove,
 	.driver.name	= "tnetv107x-keypad",
 	.driver.owner	= THIS_MODULE,
 };

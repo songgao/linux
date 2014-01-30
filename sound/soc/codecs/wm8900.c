@@ -279,7 +279,8 @@ static int wm8900_hp_event(struct snd_soc_dapm_widget *w,
 		break;
 
 	default:
-		BUG();
+		WARN(1, "Invalid event %d\n", event);
+		break;
 	}
 
 	return 0;
@@ -691,7 +692,8 @@ static int fll_factors(struct _fll_div *fll_div, unsigned int Fref,
 	unsigned int K, Ndiv, Nmod, target;
 	unsigned int div;
 
-	BUG_ON(!Fout);
+	if (WARN_ON(!Fout))
+		return -EINVAL;
 
 	/* The FLL must run at 90-100MHz which is then scaled down to
 	 * the output value by FLLCLK_DIV. */
@@ -742,8 +744,9 @@ static int fll_factors(struct _fll_div *fll_div, unsigned int Fref,
 	/* Move down to proper range now rounding is done */
 	fll_div->k = K / 10;
 
-	BUG_ON(target != Fout * (fll_div->fllclk_div << 2));
-	BUG_ON(!K && target != Fref * fll_div->fll_ratio * fll_div->n);
+	if (WARN_ON(target != Fout * (fll_div->fllclk_div << 2)) ||
+	    WARN_ON(!K && target != Fref * fll_div->fll_ratio * fll_div->n))
+		return -EINVAL;
 
 	return 0;
 }
@@ -1247,7 +1250,7 @@ static const struct regmap_config wm8900_regmap = {
 };
 
 #if defined(CONFIG_SPI_MASTER)
-static int __devinit wm8900_spi_probe(struct spi_device *spi)
+static int wm8900_spi_probe(struct spi_device *spi)
 {
 	struct wm8900_priv *wm8900;
 	int ret;
@@ -1269,7 +1272,7 @@ static int __devinit wm8900_spi_probe(struct spi_device *spi)
 	return ret;
 }
 
-static int __devexit wm8900_spi_remove(struct spi_device *spi)
+static int wm8900_spi_remove(struct spi_device *spi)
 {
 	snd_soc_unregister_codec(&spi->dev);
 	return 0;
@@ -1281,13 +1284,13 @@ static struct spi_driver wm8900_spi_driver = {
 		.owner	= THIS_MODULE,
 	},
 	.probe		= wm8900_spi_probe,
-	.remove		= __devexit_p(wm8900_spi_remove),
+	.remove		= wm8900_spi_remove,
 };
 #endif /* CONFIG_SPI_MASTER */
 
 #if defined(CONFIG_I2C) || defined(CONFIG_I2C_MODULE)
-static __devinit int wm8900_i2c_probe(struct i2c_client *i2c,
-				      const struct i2c_device_id *id)
+static int wm8900_i2c_probe(struct i2c_client *i2c,
+			    const struct i2c_device_id *id)
 {
 	struct wm8900_priv *wm8900;
 	int ret;
@@ -1309,7 +1312,7 @@ static __devinit int wm8900_i2c_probe(struct i2c_client *i2c,
 	return ret;
 }
 
-static __devexit int wm8900_i2c_remove(struct i2c_client *client)
+static int wm8900_i2c_remove(struct i2c_client *client)
 {
 	snd_soc_unregister_codec(&client->dev);
 	return 0;
@@ -1327,7 +1330,7 @@ static struct i2c_driver wm8900_i2c_driver = {
 		.owner = THIS_MODULE,
 	},
 	.probe =    wm8900_i2c_probe,
-	.remove =   __devexit_p(wm8900_i2c_remove),
+	.remove =   wm8900_i2c_remove,
 	.id_table = wm8900_i2c_id,
 };
 #endif

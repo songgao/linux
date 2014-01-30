@@ -48,12 +48,13 @@
 #include <asm/prom.h>
 #include <asm/hvsi.h>
 #include <asm/udbg.h>
+#include <asm/machdep.h>
 
 #include "hvc_console.h"
 
 static const char hvc_driver_name[] = "hvc_console";
 
-static struct vio_device_id hvc_driver_table[] __devinitdata = {
+static struct vio_device_id hvc_driver_table[] = {
 	{"serial", "hvterm1"},
 #ifndef HVC_OLD_HVSI
 	{"serial", "hvterm-protocol"},
@@ -293,7 +294,7 @@ static int udbg_hvc_getc(void)
 	}
 }
 
-static int __devinit hvc_vio_probe(struct vio_dev *vdev,
+static int hvc_vio_probe(struct vio_dev *vdev,
 				   const struct vio_device_id *id)
 {
 	const struct hv_ops *ops;
@@ -313,7 +314,7 @@ static int __devinit hvc_vio_probe(struct vio_dev *vdev,
 		proto = HV_PROTOCOL_HVSI;
 		ops = &hvterm_hvsi_ops;
 	} else {
-		pr_err("hvc_vio: Unkown protocol for %s\n", vdev->dev.of_node->full_name);
+		pr_err("hvc_vio: Unknown protocol for %s\n", vdev->dev.of_node->full_name);
 		return -ENXIO;
 	}
 
@@ -362,7 +363,7 @@ static int __devinit hvc_vio_probe(struct vio_dev *vdev,
 	return 0;
 }
 
-static int __devexit hvc_vio_remove(struct vio_dev *vdev)
+static int hvc_vio_remove(struct vio_dev *vdev)
 {
 	struct hvc_struct *hp = dev_get_drvdata(&vdev->dev);
 	int rc, termno;
@@ -404,7 +405,7 @@ module_exit(hvc_vio_exit);
 void __init hvc_vio_init_early(void)
 {
 	struct device_node *stdout_node;
-	const u32 *termno;
+	const __be32 *termno;
 	const char *name;
 	const struct hv_ops *ops;
 
@@ -429,7 +430,7 @@ void __init hvc_vio_init_early(void)
 	termno = of_get_property(stdout_node, "reg", NULL);
 	if (termno == NULL)
 		goto out;
-	hvterm_priv0.termno = *termno;
+	hvterm_priv0.termno = of_read_number(termno, 1);
 	spin_lock_init(&hvterm_priv0.buf_lock);
 	hvterm_privs[0] = &hvterm_priv0;
 
@@ -457,7 +458,9 @@ void __init hvc_vio_init_early(void)
 	if (hvterm_priv0.proto == HV_PROTOCOL_HVSI)
 		goto out;
 #endif
-	add_preferred_console("hvc", 0, NULL);
+	/* Check whether the user has requested a different console. */
+	if (!strstr(cmd_line, "console="))
+		add_preferred_console("hvc", 0, NULL);
 	hvc_instantiate(0, 0, ops);
 out:
 	of_node_put(stdout_node);

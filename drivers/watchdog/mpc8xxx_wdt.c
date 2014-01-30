@@ -24,6 +24,7 @@
 #include <linux/kernel.h>
 #include <linux/timer.h>
 #include <linux/miscdevice.h>
+#include <linux/of_address.h>
 #include <linux/of_platform.h>
 #include <linux/module.h>
 #include <linux/watchdog.h>
@@ -188,7 +189,7 @@ static struct miscdevice mpc8xxx_wdt_miscdev = {
 };
 
 static const struct of_device_id mpc8xxx_wdt_match[];
-static int __devinit mpc8xxx_wdt_probe(struct platform_device *ofdev)
+static int mpc8xxx_wdt_probe(struct platform_device *ofdev)
 {
 	int ret;
 	const struct of_device_id *match;
@@ -245,7 +246,7 @@ err_unmap:
 	return ret;
 }
 
-static int __devexit mpc8xxx_wdt_remove(struct platform_device *ofdev)
+static int mpc8xxx_wdt_remove(struct platform_device *ofdev)
 {
 	mpc8xxx_wdt_pr_warn("watchdog removed");
 	del_timer_sync(&wdt_timer);
@@ -281,7 +282,7 @@ MODULE_DEVICE_TABLE(of, mpc8xxx_wdt_match);
 
 static struct platform_driver mpc8xxx_wdt_driver = {
 	.probe		= mpc8xxx_wdt_probe,
-	.remove		= __devexit_p(mpc8xxx_wdt_remove),
+	.remove		= mpc8xxx_wdt_remove,
 	.driver = {
 		.name = "mpc8xxx_wdt",
 		.owner = THIS_MODULE,
@@ -329,4 +330,3 @@ MODULE_AUTHOR("Dave Updegraff, Kumar Gala");
 MODULE_DESCRIPTION("Driver for watchdog timer in MPC8xx/MPC83xx/MPC86xx "
 		   "uProcessors");
 MODULE_LICENSE("GPL");
-MODULE_ALIAS_MISCDEV(WATCHDOG_MINOR);

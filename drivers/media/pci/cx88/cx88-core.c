@@ -48,9 +48,9 @@ MODULE_LICENSE("GPL");
 
 /* ------------------------------------------------------------------ */
 
-static unsigned int core_debug;
-module_param(core_debug,int,0644);
-MODULE_PARM_DESC(core_debug,"enable debug messages [core]");
+unsigned int cx88_core_debug;
+module_param_named(core_debug, cx88_core_debug, int, 0644);
+MODULE_PARM_DESC(core_debug, "enable debug messages [core]");
 
 static unsigned int nicam;
 module_param(nicam,int,0644);
@@ -60,8 +60,10 @@ static unsigned int nocomb;
 module_param(nocomb,int,0644);
 MODULE_PARM_DESC(nocomb,"disable comb filter");
 
-#define dprintk(level,fmt, arg...)	if (core_debug >= level)	\
-	printk(KERN_DEBUG "%s: " fmt, core->name , ## arg)
+#define dprintk(level,fmt, arg...)	do {				\
+	if (cx88_core_debug >= level)					\
+		printk(KERN_DEBUG "%s: " fmt, core->name , ## arg);	\
+	} while(0)
 
 static unsigned int cx88_devcount;
 static LIST_HEAD(cx88_devlist);
@@ -549,7 +551,7 @@ void cx88_wakeup(struct cx88_core *core,
 		 * up to 32767 buffers in flight... */
 		if ((s16) (count - buf->count) < 0)
 			break;
-		do_gettimeofday(&buf->vb.ts);
+		v4l2_get_timestamp(&buf->vb.ts);
 		dprintk(2,"[%p/%d] wakeup reg=%d buf=%d\n",buf,buf->vb.i,
 			count, buf->count);
 		buf->vb.state = VIDEOBUF_DONE;
@@ -646,22 +648,22 @@ int cx88_reset(struct cx88_core *core)
 
 /* ------------------------------------------------------------------ */
 
-static unsigned int inline norm_swidth(v4l2_std_id norm)
+static inline unsigned int norm_swidth(v4l2_std_id norm)
 {
 	return (norm & (V4L2_STD_MN & ~V4L2_STD_PAL_Nc)) ? 754 : 922;
 }
 
-static unsigned int inline norm_hdelay(v4l2_std_id norm)
+static inline unsigned int norm_hdelay(v4l2_std_id norm)
 {
 	return (norm & (V4L2_STD_MN & ~V4L2_STD_PAL_Nc)) ? 135 : 186;
 }
 
-static unsigned int inline norm_vdelay(v4l2_std_id norm)
+static inline unsigned int norm_vdelay(v4l2_std_id norm)
 {
 	return (norm & V4L2_STD_625_50) ? 0x24 : 0x18;
 }
 
-static unsigned int inline norm_fsc8(v4l2_std_id norm)
+static inline unsigned int norm_fsc8(v4l2_std_id norm)
 {
 	if (norm & V4L2_STD_PAL_M)
 		return 28604892;      // 3.575611 MHz
@@ -681,7 +683,7 @@ static unsigned int inline norm_fsc8(v4l2_std_id norm)
 	return 35468950;      // 4.43361875 MHz +/- 5 Hz
 }
 
-static unsigned int inline norm_htotal(v4l2_std_id norm)
+static inline unsigned int norm_htotal(v4l2_std_id norm)
 {
 
 	unsigned int fsc4=norm_fsc8(norm)/2;
@@ -692,7 +694,7 @@ static unsigned int inline norm_htotal(v4l2_std_id norm)
 				((fsc4+262)/525*1001+15000)/30000;
 }
 
-static unsigned int inline norm_vbipack(v4l2_std_id norm)
+static inline unsigned int norm_vbipack(v4l2_std_id norm)
 {
 	return (norm & V4L2_STD_625_50) ? 511 : 400;
 }
@@ -1032,7 +1034,14 @@ struct video_device *cx88_vdev_init(struct cx88_core *core,
 	if (NULL == vfd)
 		return NULL;
 	*vfd = *template_;
+	/*
+	 * The dev pointer of v4l2_device is NULL, instead we set the
+	 * video_device dev_parent pointer to the correct PCI bus device.
+	 * This driver is a rare example where there is one v4l2_device,
+	 * but the video nodes have different parent (PCI) devices.
+	 */
 	vfd->v4l2_dev = &core->v4l2_dev;
+	vfd->dev_parent = &pci->dev;
 	vfd->release = video_device_release;
 	snprintf(vfd->name, sizeof(vfd->name), "%s %s (%s)",
 		 core->name, type, core->board.name);

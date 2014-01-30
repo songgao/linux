@@ -14,11 +14,6 @@
     but WITHOUT ANY WARRANTY; without even the implied warranty of
     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
     GNU General Public License for more details.
-
-    You should have received a copy of the GNU General Public License
-    along with this program; if not, write to the Free Software
-    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
-
 */
 /*
 Driver: dmm32at
@@ -37,9 +32,10 @@ Configuration Options:
   comedi_config /dev/comedi0 dmm32at baseaddr,irq
 */
 
+#include <linux/module.h>
+#include <linux/delay.h>
 #include <linux/interrupt.h>
 #include "../comedidev.h"
-#include <linux/ioport.h>
 
 #include "comedi_fc.h"
 
@@ -156,10 +152,6 @@ static const struct comedi_lrange dmm32at_aoranges = {
 	 BIP_RANGE(10),
 	 BIP_RANGE(5),
 	 }
-};
-
-struct dmm32at_board {
-	const char *name;
 };
 
 struct dmm32at_private {
@@ -284,33 +276,25 @@ static int dmm32at_ai_cmdtest(struct comedi_device *dev,
 	if (err)
 		return 2;
 
-	/* step 3: make sure arguments are trivially compatible */
+	/* Step 3: check if arguments are trivially valid */
 
-	if (cmd->start_arg != 0) {
-		cmd->start_arg = 0;
-		err++;
-	}
+	err |= cfc_check_trigger_arg_is(&cmd->start_arg, 0);
+
 #define MAX_SCAN_SPEED	1000000	/* in nanoseconds */
 #define MIN_SCAN_SPEED	1000000000	/* in nanoseconds */
 
 	if (cmd->scan_begin_src == TRIG_TIMER) {
-		if (cmd->scan_begin_arg < MAX_SCAN_SPEED) {
-			cmd->scan_begin_arg = MAX_SCAN_SPEED;
-			err++;
-		}
-		if (cmd->scan_begin_arg > MIN_SCAN_SPEED) {
-			cmd->scan_begin_arg = MIN_SCAN_SPEED;
-			err++;
-		}
+		err |= cfc_check_trigger_arg_min(&cmd->scan_begin_arg,
+						 MAX_SCAN_SPEED);
+		err |= cfc_check_trigger_arg_max(&cmd->scan_begin_arg,
+						 MIN_SCAN_SPEED);
 	} else {
 		/* external trigger */
 		/* should be level/edge, hi/lo specification here */
 		/* should specify multiple external triggers */
-		if (cmd->scan_begin_arg > 9) {
-			cmd->scan_begin_arg = 9;
-			err++;
-		}
+		err |= cfc_check_trigger_arg_max(&cmd->scan_begin_arg, 9);
 	}
+
 	if (cmd->convert_src == TRIG_TIMER) {
 		if (cmd->convert_arg >= 17500)
 			cmd->convert_arg = 20000;
@@ -320,35 +304,20 @@ static int dmm32at_ai_cmdtest(struct comedi_device *dev,
 			cmd->convert_arg = 10000;
 		else
 			cmd->convert_arg = 5000;
-
 	} else {
 		/* external trigger */
 		/* see above */
-		if (cmd->convert_arg > 9) {
-			cmd->convert_arg = 9;
-			err++;
-		}
+		err |= cfc_check_trigger_arg_max(&cmd->convert_arg, 9);
 	}
 
-	if (cmd->scan_end_arg != cmd->chanlist_len) {
-		cmd->scan_end_arg = cmd->chanlist_len;
-		err++;
-	}
+	err |= cfc_check_trigger_arg_is(&cmd->scan_end_arg, cmd->chanlist_len);
+
 	if (cmd->stop_src == TRIG_COUNT) {
-		if (cmd->stop_arg > 0xfffffff0) {
-			cmd->stop_arg = 0xfffffff0;
-			err++;
-		}
-		if (cmd->stop_arg == 0) {
-			cmd->stop_arg = 1;
-			err++;
-		}
+		err |= cfc_check_trigger_arg_max(&cmd->stop_arg, 0xfffffff0);
+		err |= cfc_check_trigger_arg_min(&cmd->stop_arg, 1);
 	} else {
 		/* TRIG_NONE */
-		if (cmd->stop_arg != 0) {
-			cmd->stop_arg = 0;
-			err++;
-		}
+		err |= cfc_check_trigger_arg_is(&cmd->stop_arg, 0);
 	}
 
 	if (err)
@@ -627,83 +596,74 @@ static int dmm32at_ao_rinsn(struct comedi_device *dev,
 
 static int dmm32at_dio_insn_bits(struct comedi_device *dev,
 				 struct comedi_subdevice *s,
-				 struct comedi_insn *insn, unsigned int *data)
+				 struct comedi_insn *insn,
+				 unsigned int *data)
 {
 	struct dmm32at_private *devpriv = dev->private;
-	unsigned char diobits;
+	unsigned int mask;
+	unsigned int val;
 
-	/* The insn data is a mask in data[0] and the new data
-	 * in data[1], each channel cooresponding to a bit. */
-	if (data[0]) {
-		s->state &= ~data[0];
-		s->state |= data[0] & data[1];
-		/* Write out the new digital output lines */
-		/* outw(s->state,dev->iobase + DMM32AT_DIO); */
+	mask = comedi_dio_update_state(s, data);
+	if (mask) {
+		/* get access to the DIO regs */
+		outb(DMM32AT_DIOACC, dev->iobase + DMM32AT_CNTRL);
+
+		/* if either part of dio is set for output */
+		if (((devpriv->dio_config & DMM32AT_DIRCL) == 0) ||
+		    ((devpriv->dio_config & DMM32AT_DIRCH) == 0)) {
+			val = (s->state & 0x00ff0000) >> 16;
+			outb(val, dev->iobase + DMM32AT_DIOC);
+		}
+		if ((devpriv->dio_config & DMM32AT_DIRB) == 0) {
+			val = (s->state & 0x0000ff00) >> 8;
+			outb(val, dev->iobase + DMM32AT_DIOB);
+		}
+		if ((devpriv->dio_config & DMM32AT_DIRA) == 0) {
+			val = (s->state & 0x000000ff);
+			outb(val, dev->iobase + DMM32AT_DIOA);
+		}
 	}
 
-	/* get access to the DIO regs */
-	outb(DMM32AT_DIOACC, dev->iobase + DMM32AT_CNTRL);
+	val = inb(dev->iobase + DMM32AT_DIOA);
+	val |= inb(dev->iobase + DMM32AT_DIOB) << 8;
+	val |= inb(dev->iobase + DMM32AT_DIOC) << 16;
+	s->state = val;
 
-	/* if either part of dio is set for output */
-	if (((devpriv->dio_config & DMM32AT_DIRCL) == 0) ||
-	    ((devpriv->dio_config & DMM32AT_DIRCH) == 0)) {
-		diobits = (s->state & 0x00ff0000) >> 16;
-		outb(diobits, dev->iobase + DMM32AT_DIOC);
-	}
-	if ((devpriv->dio_config & DMM32AT_DIRB) == 0) {
-		diobits = (s->state & 0x0000ff00) >> 8;
-		outb(diobits, dev->iobase + DMM32AT_DIOB);
-	}
-	if ((devpriv->dio_config & DMM32AT_DIRA) == 0) {
-		diobits = (s->state & 0x000000ff);
-		outb(diobits, dev->iobase + DMM32AT_DIOA);
-	}
-
-	/* now read the state back in */
-	s->state = inb(dev->iobase + DMM32AT_DIOC);
-	s->state <<= 8;
-	s->state |= inb(dev->iobase + DMM32AT_DIOB);
-	s->state <<= 8;
-	s->state |= inb(dev->iobase + DMM32AT_DIOA);
-	data[1] = s->state;
-
-	/* on return, data[1] contains the value of the digital
-	 * input and output lines. */
-	/* data[1]=inw(dev->iobase + DMM32AT_DIO); */
-	/* or we could just return the software copy of the output values if
-	 * it was a purely digital output subdevice */
-	/* data[1]=s->state; */
+	data[1] = val;
 
 	return insn->n;
 }
 
 static int dmm32at_dio_insn_config(struct comedi_device *dev,
 				   struct comedi_subdevice *s,
-				   struct comedi_insn *insn, unsigned int *data)
+				   struct comedi_insn *insn,
+				   unsigned int *data)
 {
 	struct dmm32at_private *devpriv = dev->private;
+	unsigned int chan = CR_CHAN(insn->chanspec);
+	unsigned int mask;
 	unsigned char chanbit;
-	int chan = CR_CHAN(insn->chanspec);
+	int ret;
 
-	if (insn->n != 1)
-		return -EINVAL;
-
-	if (chan < 8)
+	if (chan < 8) {
+		mask = 0x0000ff;
 		chanbit = DMM32AT_DIRA;
-	else if (chan < 16)
+	} else if (chan < 16) {
+		mask = 0x00ff00;
 		chanbit = DMM32AT_DIRB;
-	else if (chan < 20)
+	} else if (chan < 20) {
+		mask = 0x0f0000;
 		chanbit = DMM32AT_DIRCL;
-	else
+	} else {
+		mask = 0xf00000;
 		chanbit = DMM32AT_DIRCH;
+	}
 
-	/* The input or output configuration of each digital line is
-	 * configured by a special insn_config instruction.  chanspec
-	 * contains the channel to be changed, and data[0] contains the
-	 * value COMEDI_INPUT or COMEDI_OUTPUT. */
+	ret = comedi_dio_insn_config(dev, s, insn, data, mask);
+	if (ret)
+		return ret;
 
-	/* if output clear the bit, otherwise set it */
-	if (data[0] == COMEDI_OUTPUT)
+	if (data[0] == INSN_CONFIG_DIO_OUTPUT)
 		devpriv->dio_config &= ~chanbit;
 	else
 		devpriv->dio_config |= chanbit;
@@ -712,34 +672,23 @@ static int dmm32at_dio_insn_config(struct comedi_device *dev,
 	/* set the DIO's to the new configuration setting */
 	outb(devpriv->dio_config, dev->iobase + DMM32AT_DIOCONF);
 
-	return 1;
+	return insn->n;
 }
 
 static int dmm32at_attach(struct comedi_device *dev,
 			  struct comedi_devconfig *it)
 {
-	const struct dmm32at_board *board = comedi_board(dev);
 	struct dmm32at_private *devpriv;
 	int ret;
 	struct comedi_subdevice *s;
 	unsigned char aihi, ailo, fifostat, aistat, intstat, airback;
-	unsigned long iobase;
 	unsigned int irq;
 
-	iobase = it->options[0];
 	irq = it->options[1];
 
-	printk(KERN_INFO "comedi%d: dmm32at: attaching\n", dev->minor);
-	printk(KERN_DEBUG "dmm32at: probing at address 0x%04lx, irq %u\n",
-	       iobase, irq);
-
-	/* register address space */
-	if (!request_region(iobase, DMM32AT_MEMSIZE, board->name)) {
-		printk(KERN_ERR "comedi%d: dmm32at: I/O port conflict\n",
-		       dev->minor);
-		return -EIO;
-	}
-	dev->iobase = iobase;
+	ret = comedi_request_region(dev, it->options[0], DMM32AT_MEMSIZE);
+	if (ret)
+		return ret;
 
 	/* the following just makes sure the board is there and gets
 	   it to a known state */
@@ -788,7 +737,7 @@ static int dmm32at_attach(struct comedi_device *dev,
 
 	/* board is there, register interrupt */
 	if (irq) {
-		ret = request_irq(irq, dmm32at_isr, 0, board->name, dev);
+		ret = request_irq(irq, dmm32at_isr, 0, dev->board_name, dev);
 		if (ret < 0) {
 			printk(KERN_ERR "dmm32at: irq conflict\n");
 			return ret;
@@ -796,11 +745,9 @@ static int dmm32at_attach(struct comedi_device *dev,
 		dev->irq = irq;
 	}
 
-	dev->board_name = board->name;
-
-	if (alloc_private(dev, sizeof(*devpriv)) < 0)
+	devpriv = comedi_alloc_devpriv(dev, sizeof(*devpriv));
+	if (!devpriv)
 		return -ENOMEM;
-	devpriv = dev->private;
 
 	ret = comedi_alloc_subdevices(dev, 3);
 	if (ret)
@@ -859,28 +806,11 @@ static int dmm32at_attach(struct comedi_device *dev,
 
 }
 
-static void dmm32at_detach(struct comedi_device *dev)
-{
-	if (dev->irq)
-		free_irq(dev->irq, dev);
-	if (dev->iobase)
-		release_region(dev->iobase, DMM32AT_MEMSIZE);
-}
-
-static const struct dmm32at_board dmm32at_boards[] = {
-	{
-		.name		= "dmm32at",
-	},
-};
-
 static struct comedi_driver dmm32at_driver = {
 	.driver_name	= "dmm32at",
 	.module		= THIS_MODULE,
 	.attach		= dmm32at_attach,
-	.detach		= dmm32at_detach,
-	.board_name	= &dmm32at_boards[0].name,
-	.offset		= sizeof(struct dmm32at_board),
-	.num_names	= ARRAY_SIZE(dmm32at_boards),
+	.detach		= comedi_legacy_detach,
 };
 module_comedi_driver(dmm32at_driver);
 

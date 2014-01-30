@@ -1,7 +1,7 @@
 /*
  * linux/mm/mmzone.c
  *
- * management codes for pgdats and zones.
+ * management codes for pgdats, zones and page flags
  */
 
 
@@ -87,7 +87,7 @@ int memmap_valid_within(unsigned long pfn,
 }
 #endif /* CONFIG_ARCH_HAS_HOLES_MEMORYMODEL */
 
-void lruvec_init(struct lruvec *lruvec, struct zone *zone)
+void lruvec_init(struct lruvec *lruvec)
 {
 	enum lru_list lru;
 
@@ -95,8 +95,22 @@ void lruvec_init(struct lruvec *lruvec, struct zone *zone)
 
 	for_each_lru(lru)
 		INIT_LIST_HEAD(&lruvec->lists[lru]);
-
-#ifdef CONFIG_MEMCG
-	lruvec->zone = zone;
-#endif
 }
+
+#if defined(CONFIG_NUMA_BALANCING) && !defined(LAST_CPUPID_NOT_IN_PAGE_FLAGS)
+int page_cpupid_xchg_last(struct page *page, int cpupid)
+{
+	unsigned long old_flags, flags;
+	int last_cpupid;
+
+	do {
+		old_flags = flags = page->flags;
+		last_cpupid = page_cpupid_last(page);
+
+		flags &= ~(LAST_CPUPID_MASK << LAST_CPUPID_PGSHIFT);
+		flags |= (cpupid & LAST_CPUPID_MASK) << LAST_CPUPID_PGSHIFT;
+	} while (unlikely(cmpxchg(&page->flags, old_flags, flags) != old_flags));
+
+	return last_cpupid;
+}
+#endif

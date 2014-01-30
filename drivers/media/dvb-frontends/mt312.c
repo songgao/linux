@@ -36,6 +36,8 @@
 #include "mt312_priv.h"
 #include "mt312.h"
 
+/* Max transfer size done by I2C transfer functions */
+#define MAX_XFER_SIZE  64
 
 struct mt312_state {
 	struct i2c_adapter *i2c;
@@ -96,8 +98,14 @@ static int mt312_write(struct mt312_state *state, const enum mt312_reg_addr reg,
 		       const u8 *src, const size_t count)
 {
 	int ret;
-	u8 buf[count + 1];
+	u8 buf[MAX_XFER_SIZE];
 	struct i2c_msg msg;
+
+	if (1 + count > sizeof(buf)) {
+		printk(KERN_WARNING
+		       "mt312: write: len=%zd is too big!\n", count);
+		return -EINVAL;
+	}
 
 	if (debug) {
 		int i;
@@ -549,7 +557,7 @@ static int mt312_set_frontend(struct dvb_frontend *fe)
 	    || (p->frequency > fe->ops.info.frequency_max))
 		return -EINVAL;
 
-	if ((p->inversion < INVERSION_OFF)
+	if (((int)p->inversion < INVERSION_OFF)
 	    || (p->inversion > INVERSION_ON))
 		return -EINVAL;
 
@@ -557,7 +565,7 @@ static int mt312_set_frontend(struct dvb_frontend *fe)
 	    || (p->symbol_rate > fe->ops.info.symbol_rate_max))
 		return -EINVAL;
 
-	if ((p->fec_inner < FEC_NONE)
+	if (((int)p->fec_inner < FEC_NONE)
 	    || (p->fec_inner > FEC_AUTO))
 		return -EINVAL;
 

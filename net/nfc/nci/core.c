@@ -205,10 +205,10 @@ static void nci_rf_discover_req(struct nci_dev *ndev, unsigned long opt)
 	cmd.num_disc_configs = 0;
 
 	if ((cmd.num_disc_configs < NCI_MAX_NUM_RF_CONFIGS) &&
-	    (protocols & NFC_PROTO_JEWEL_MASK
-	     || protocols & NFC_PROTO_MIFARE_MASK
-	     || protocols & NFC_PROTO_ISO14443_MASK
-	     || protocols & NFC_PROTO_NFC_DEP_MASK)) {
+	    (protocols & NFC_PROTO_JEWEL_MASK ||
+	     protocols & NFC_PROTO_MIFARE_MASK ||
+	     protocols & NFC_PROTO_ISO14443_MASK ||
+	     protocols & NFC_PROTO_NFC_DEP_MASK)) {
 		cmd.disc_configs[cmd.num_disc_configs].rf_tech_and_mode =
 			NCI_NFC_A_PASSIVE_POLL_MODE;
 		cmd.disc_configs[cmd.num_disc_configs].frequency = 1;
@@ -224,8 +224,8 @@ static void nci_rf_discover_req(struct nci_dev *ndev, unsigned long opt)
 	}
 
 	if ((cmd.num_disc_configs < NCI_MAX_NUM_RF_CONFIGS) &&
-	    (protocols & NFC_PROTO_FELICA_MASK
-	     || protocols & NFC_PROTO_NFC_DEP_MASK)) {
+	    (protocols & NFC_PROTO_FELICA_MASK ||
+	     protocols & NFC_PROTO_NFC_DEP_MASK)) {
 		cmd.disc_configs[cmd.num_disc_configs].rf_tech_and_mode =
 			NCI_NFC_F_PASSIVE_POLL_MODE;
 		cmd.disc_configs[cmd.num_disc_configs].frequency = 1;
@@ -414,13 +414,13 @@ static int nci_set_local_general_bytes(struct nfc_dev *nfc_dev)
 	struct nci_dev *ndev = nfc_get_drvdata(nfc_dev);
 	struct nci_set_config_param param;
 	__u8 local_gb[NFC_MAX_GT_LEN];
-	int i, rc = 0;
+	int i;
 
 	param.val = nfc_get_local_general_bytes(nfc_dev, &param.len);
 	if ((param.val == NULL) || (param.len == 0))
-		return rc;
+		return 0;
 
-	if (param.len > NCI_MAX_PARAM_LEN)
+	if (param.len > NFC_MAX_GT_LEN)
 		return -EINVAL;
 
 	for (i = 0; i < param.len; i++)
@@ -429,10 +429,8 @@ static int nci_set_local_general_bytes(struct nfc_dev *nfc_dev)
 	param.id = NCI_PN_ATR_REQ_GEN_BYTES;
 	param.val = local_gb;
 
-	rc = nci_request(ndev, nci_set_config_req, (unsigned long)&param,
-			 msecs_to_jiffies(NCI_SET_CONFIG_TIMEOUT));
-
-	return rc;
+	return nci_request(ndev, nci_set_config_req, (unsigned long)&param,
+			   msecs_to_jiffies(NCI_SET_CONFIG_TIMEOUT));
 }
 
 static int nci_start_poll(struct nfc_dev *nfc_dev,
@@ -579,7 +577,6 @@ static void nci_deactivate_target(struct nfc_dev *nfc_dev,
 	}
 }
 
-
 static int nci_dep_link_up(struct nfc_dev *nfc_dev, struct nfc_target *target,
 			   __u8 comm_mode, __u8 *gb, size_t gb_len)
 {
@@ -639,6 +636,21 @@ static int nci_transceive(struct nfc_dev *nfc_dev, struct nfc_target *target,
 	return rc;
 }
 
+static int nci_enable_se(struct nfc_dev *nfc_dev, u32 se_idx)
+{
+	return 0;
+}
+
+static int nci_disable_se(struct nfc_dev *nfc_dev, u32 se_idx)
+{
+	return 0;
+}
+
+static int nci_discover_se(struct nfc_dev *nfc_dev)
+{
+	return 0;
+}
+
 static struct nfc_ops nci_nfc_ops = {
 	.dev_up = nci_dev_up,
 	.dev_down = nci_dev_down,
@@ -649,6 +661,9 @@ static struct nfc_ops nci_nfc_ops = {
 	.activate_target = nci_activate_target,
 	.deactivate_target = nci_deactivate_target,
 	.im_transceive = nci_transceive,
+	.enable_se = nci_enable_se,
+	.disable_se = nci_disable_se,
+	.discover_se = nci_discover_se,
 };
 
 /* ---- Interface to NCI drivers ---- */
@@ -798,16 +813,15 @@ EXPORT_SYMBOL(nci_unregister_device);
 /**
  * nci_recv_frame - receive frame from NCI drivers
  *
+ * @ndev: The nci device
  * @skb: The sk_buff to receive
  */
-int nci_recv_frame(struct sk_buff *skb)
+int nci_recv_frame(struct nci_dev *ndev, struct sk_buff *skb)
 {
-	struct nci_dev *ndev = (struct nci_dev *) skb->dev;
-
 	pr_debug("len %d\n", skb->len);
 
-	if (!ndev || (!test_bit(NCI_UP, &ndev->flags)
-		      && !test_bit(NCI_INIT, &ndev->flags))) {
+	if (!ndev || (!test_bit(NCI_UP, &ndev->flags) &&
+	    !test_bit(NCI_INIT, &ndev->flags))) {
 		kfree_skb(skb);
 		return -ENXIO;
 	}
@@ -820,10 +834,8 @@ int nci_recv_frame(struct sk_buff *skb)
 }
 EXPORT_SYMBOL(nci_recv_frame);
 
-static int nci_send_frame(struct sk_buff *skb)
+static int nci_send_frame(struct nci_dev *ndev, struct sk_buff *skb)
 {
-	struct nci_dev *ndev = (struct nci_dev *) skb->dev;
-
 	pr_debug("len %d\n", skb->len);
 
 	if (!ndev) {
@@ -834,7 +846,7 @@ static int nci_send_frame(struct sk_buff *skb)
 	/* Get rid of skb owner, prior to sending to the driver. */
 	skb_orphan(skb);
 
-	return ndev->ops->send(skb);
+	return ndev->ops->send(ndev, skb);
 }
 
 /* Send NCI command */
@@ -861,8 +873,6 @@ int nci_send_cmd(struct nci_dev *ndev, __u16 opcode, __u8 plen, void *payload)
 
 	if (plen)
 		memcpy(skb_put(skb, plen), payload, plen);
-
-	skb->dev = (void *) ndev;
 
 	skb_queue_tail(&ndev->cmd_q, skb);
 	queue_work(ndev->cmd_wq, &ndev->cmd_work);
@@ -895,7 +905,7 @@ static void nci_tx_work(struct work_struct *work)
 			 nci_conn_id(skb->data),
 			 nci_plen(skb->data));
 
-		nci_send_frame(skb);
+		nci_send_frame(ndev, skb);
 
 		mod_timer(&ndev->data_timer,
 			  jiffies + msecs_to_jiffies(NCI_DATA_TIMEOUT));
@@ -964,7 +974,7 @@ static void nci_cmd_work(struct work_struct *work)
 			 nci_opcode_oid(nci_opcode(skb->data)),
 			 nci_plen(skb->data));
 
-		nci_send_frame(skb);
+		nci_send_frame(ndev, skb);
 
 		mod_timer(&ndev->cmd_timer,
 			  jiffies + msecs_to_jiffies(NCI_CMD_TIMEOUT));

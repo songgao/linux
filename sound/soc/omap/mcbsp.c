@@ -28,8 +28,6 @@
 
 #include <linux/platform_data/asoc-ti-mcbsp.h>
 
-#include <plat/cpu.h>
-
 #include "mcbsp.h"
 
 static void omap_mcbsp_write(struct omap_mcbsp *mcbsp, u16 reg, u32 val)
@@ -612,7 +610,7 @@ void omap_mcbsp_free(struct omap_mcbsp *mcbsp)
 	 * system will refuse to enter idle if the CLKS pin source is not reset
 	 * back to internal source.
 	 */
-	if (!cpu_class_is_omap1())
+	if (!mcbsp_omap1())
 		omap2_mcbsp_set_clks_src(mcbsp, MCBSP_CLKS_PRCM_SRC);
 
 	spin_lock(&mcbsp->lock);
@@ -783,7 +781,7 @@ static ssize_t prop##_store(struct device *dev,				\
 	unsigned long val;						\
 	int status;							\
 									\
-	status = strict_strtoul(buf, 0, &val);				\
+	status = kstrtoul(buf, 0, &val);				\
 	if (status)							\
 		return status;						\
 									\
@@ -932,8 +930,7 @@ static const struct attribute_group sidetone_attr_group = {
 	.attrs = (struct attribute **)sidetone_attrs,
 };
 
-static int __devinit omap_st_add(struct omap_mcbsp *mcbsp,
-				 struct resource *res)
+static int omap_st_add(struct omap_mcbsp *mcbsp, struct resource *res)
 {
 	struct omap_mcbsp_st_data *st_data;
 	int err;
@@ -959,7 +956,7 @@ static int __devinit omap_st_add(struct omap_mcbsp *mcbsp,
  * McBSP1 and McBSP3 are directly mapped on 1610 and 1510.
  * 730 has only 2 McBSP, and both of them are MPU peripherals.
  */
-int __devinit omap_mcbsp_init(struct platform_device *pdev)
+int omap_mcbsp_init(struct platform_device *pdev)
 {
 	struct omap_mcbsp *mcbsp = platform_get_drvdata(pdev);
 	struct resource *res;
@@ -1015,25 +1012,32 @@ int __devinit omap_mcbsp_init(struct platform_device *pdev)
 		}
 	}
 
-	res = platform_get_resource_byname(pdev, IORESOURCE_DMA, "rx");
-	if (!res) {
-		dev_err(&pdev->dev, "invalid rx DMA channel\n");
-		return -ENODEV;
-	}
-	/* RX DMA request number, and port address configuration */
-	mcbsp->dma_data[1].name = "Audio Capture";
-	mcbsp->dma_data[1].dma_req = res->start;
-	mcbsp->dma_data[1].port_addr = omap_mcbsp_dma_reg_params(mcbsp, 1);
+	if (!pdev->dev.of_node) {
+		res = platform_get_resource_byname(pdev, IORESOURCE_DMA, "tx");
+		if (!res) {
+			dev_err(&pdev->dev, "invalid tx DMA channel\n");
+			return -ENODEV;
+		}
+		mcbsp->dma_req[0] = res->start;
+		mcbsp->dma_data[0].filter_data = &mcbsp->dma_req[0];
 
-	res = platform_get_resource_byname(pdev, IORESOURCE_DMA, "tx");
-	if (!res) {
-		dev_err(&pdev->dev, "invalid tx DMA channel\n");
-		return -ENODEV;
+		res = platform_get_resource_byname(pdev, IORESOURCE_DMA, "rx");
+		if (!res) {
+			dev_err(&pdev->dev, "invalid rx DMA channel\n");
+			return -ENODEV;
+		}
+		mcbsp->dma_req[1] = res->start;
+		mcbsp->dma_data[1].filter_data = &mcbsp->dma_req[1];
+	} else {
+		mcbsp->dma_data[0].filter_data = "tx";
+		mcbsp->dma_data[1].filter_data = "rx";
 	}
-	/* TX DMA request number, and port address configuration */
-	mcbsp->dma_data[0].name = "Audio Playback";
-	mcbsp->dma_data[0].dma_req = res->start;
-	mcbsp->dma_data[0].port_addr = omap_mcbsp_dma_reg_params(mcbsp, 0);
+
+	mcbsp->dma_data[0].addr = omap_mcbsp_dma_reg_params(mcbsp, 0);
+	mcbsp->dma_data[0].maxburst = 4;
+
+	mcbsp->dma_data[1].addr = omap_mcbsp_dma_reg_params(mcbsp, 1);
+	mcbsp->dma_data[1].maxburst = 4;
 
 	mcbsp->fclk = clk_get(&pdev->dev, "fck");
 	if (IS_ERR(mcbsp->fclk)) {
@@ -1087,7 +1091,7 @@ err_thres:
 	return ret;
 }
 
-void __devexit omap_mcbsp_sysfs_remove(struct omap_mcbsp *mcbsp)
+void omap_mcbsp_sysfs_remove(struct omap_mcbsp *mcbsp)
 {
 	if (mcbsp->pdata->buffer_size)
 		sysfs_remove_group(&mcbsp->dev->kobj, &additional_attr_group);

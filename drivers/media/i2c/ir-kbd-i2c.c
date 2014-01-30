@@ -230,7 +230,7 @@ static int get_key_avermedia_cardbus(struct IR_i2c *ir,
 		return 0;
 
 	dprintk(1, "read key 0x%02x/0x%02x\n", key, keygroup);
-	if (keygroup < 2 || keygroup > 3) {
+	if (keygroup < 2 || keygroup > 4) {
 		/* Only a warning */
 		dprintk(1, "warning: invalid key group 0x%02x for key 0x%02x\n",
 								keygroup, key);
@@ -239,6 +239,10 @@ static int get_key_avermedia_cardbus(struct IR_i2c *ir,
 
 	*ir_key = key;
 	*ir_raw = key;
+	if (!strcmp(ir->ir_codes, RC_MAP_AVERMEDIA_M733A_RM_K6)) {
+		*ir_key |= keygroup << 8;
+		*ir_raw |= keygroup << 8;
+	}
 	return 1;
 }
 
@@ -284,14 +288,14 @@ static int ir_probe(struct i2c_client *client, const struct i2c_device_id *id)
 {
 	char *ir_codes = NULL;
 	const char *name = NULL;
-	u64 rc_type = RC_TYPE_UNKNOWN;
+	u64 rc_type = RC_BIT_UNKNOWN;
 	struct IR_i2c *ir;
 	struct rc_dev *rc = NULL;
 	struct i2c_adapter *adap = client->adapter;
 	unsigned short addr = client->addr;
 	int err;
 
-	ir = kzalloc(sizeof(struct IR_i2c), GFP_KERNEL);
+	ir = devm_kzalloc(&client->dev, sizeof(*ir), GFP_KERNEL);
 	if (!ir)
 		return -ENOMEM;
 
@@ -303,7 +307,7 @@ static int ir_probe(struct i2c_client *client, const struct i2c_device_id *id)
 	case 0x64:
 		name        = "Pixelview";
 		ir->get_key = get_key_pixelview;
-		rc_type     = RC_TYPE_OTHER;
+		rc_type     = RC_BIT_OTHER;
 		ir_codes    = RC_MAP_EMPTY;
 		break;
 	case 0x18:
@@ -311,31 +315,38 @@ static int ir_probe(struct i2c_client *client, const struct i2c_device_id *id)
 	case 0x1a:
 		name        = "Hauppauge";
 		ir->get_key = get_key_haup;
-		rc_type     = RC_TYPE_RC5;
+		rc_type     = RC_BIT_RC5;
 		ir_codes    = RC_MAP_HAUPPAUGE;
 		break;
 	case 0x30:
 		name        = "KNC One";
 		ir->get_key = get_key_knc1;
-		rc_type     = RC_TYPE_OTHER;
+		rc_type     = RC_BIT_OTHER;
 		ir_codes    = RC_MAP_EMPTY;
 		break;
 	case 0x6b:
 		name        = "FusionHDTV";
 		ir->get_key = get_key_fusionhdtv;
-		rc_type     = RC_TYPE_RC5;
+		rc_type     = RC_BIT_RC5;
 		ir_codes    = RC_MAP_FUSIONHDTV_MCE;
 		break;
 	case 0x40:
 		name        = "AVerMedia Cardbus remote";
 		ir->get_key = get_key_avermedia_cardbus;
-		rc_type     = RC_TYPE_OTHER;
+		rc_type     = RC_BIT_OTHER;
 		ir_codes    = RC_MAP_AVERMEDIA_CARDBUS;
+		break;
+	case 0x41:
+		name        = "AVerMedia EM78P153";
+		ir->get_key = get_key_avermedia_cardbus;
+		rc_type     = RC_BIT_OTHER;
+		/* RM-KV remote, seems to be same as RM-K6 */
+		ir_codes    = RC_MAP_AVERMEDIA_M733A_RM_K6;
 		break;
 	case 0x71:
 		name        = "Hauppauge/Zilog Z8";
 		ir->get_key = get_key_haup_xvr;
-		rc_type     = RC_TYPE_RC5;
+		rc_type     = RC_BIT_RC5;
 		ir_codes    = RC_MAP_HAUPPAUGE;
 		break;
 	}
@@ -383,14 +394,12 @@ static int ir_probe(struct i2c_client *client, const struct i2c_device_id *id)
 
 	if (!rc) {
 		/*
-		 * If platform_data doesn't specify rc_dev, initilize it
+		 * If platform_data doesn't specify rc_dev, initialize it
 		 * internally
 		 */
 		rc = rc_allocate_device();
-		if (!rc) {
-			err = -ENOMEM;
-			goto err_out_free;
-		}
+		if (!rc)
+			return -ENOMEM;
 	}
 	ir->rc = rc;
 
@@ -423,6 +432,7 @@ static int ir_probe(struct i2c_client *client, const struct i2c_device_id *id)
 	 */
 	rc->map_name       = ir->ir_codes;
 	rc->allowed_protos = rc_type;
+	rc->enabled_protocols = rc_type;
 	if (!rc->driver_name)
 		rc->driver_name = MODULE_NAME;
 
@@ -442,7 +452,6 @@ static int ir_probe(struct i2c_client *client, const struct i2c_device_id *id)
  err_out_free:
 	/* Only frees rc if it were allocated internally */
 	rc_free_device(rc);
-	kfree(ir);
 	return err;
 }
 
@@ -458,7 +467,6 @@ static int ir_remove(struct i2c_client *client)
 		rc_unregister_device(ir->rc);
 
 	/* free memory */
-	kfree(ir);
 	return 0;
 }
 

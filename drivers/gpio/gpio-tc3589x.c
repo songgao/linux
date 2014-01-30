@@ -96,27 +96,27 @@ static int tc3589x_gpio_direction_input(struct gpio_chip *chip,
 }
 
 /**
- * tc3589x_gpio_irq_get_virq(): Map an interrupt on a chip to a virtual IRQ
+ * tc3589x_gpio_irq_get_irq(): Map a hardware IRQ on a chip to a Linux IRQ
  *
  * @tc3589x_gpio: tc3589x_gpio_irq controller to operate on.
- * @irq: index of the interrupt requested in the chip IRQs
+ * @irq: index of the hardware interrupt requested in the chip IRQs
  *
  * Useful for drivers to request their own IRQs.
  */
-static int tc3589x_gpio_irq_get_virq(struct tc3589x_gpio *tc3589x_gpio,
-				     int irq)
+static int tc3589x_gpio_irq_get_irq(struct tc3589x_gpio *tc3589x_gpio,
+				     int hwirq)
 {
 	if (!tc3589x_gpio)
 		return -EINVAL;
 
-	return irq_create_mapping(tc3589x_gpio->domain, irq);
+	return irq_create_mapping(tc3589x_gpio->domain, hwirq);
 }
 
 static int tc3589x_gpio_to_irq(struct gpio_chip *chip, unsigned offset)
 {
 	struct tc3589x_gpio *tc3589x_gpio = to_tc3589x_gpio(chip);
 
-	return tc3589x_gpio_irq_get_virq(tc3589x_gpio, offset);
+	return tc3589x_gpio_irq_get_irq(tc3589x_gpio, offset);
 }
 
 static struct gpio_chip template_chip = {
@@ -242,9 +242,9 @@ static irqreturn_t tc3589x_gpio_irq(int irq, void *dev)
 		while (stat) {
 			int bit = __ffs(stat);
 			int line = i * 8 + bit;
-			int virq = tc3589x_gpio_irq_get_virq(tc3589x_gpio, line);
+			int irq = tc3589x_gpio_irq_get_irq(tc3589x_gpio, line);
 
-			handle_nested_irq(virq);
+			handle_nested_irq(irq);
 			stat &= ~(1 << bit);
 		}
 
@@ -254,37 +254,37 @@ static irqreturn_t tc3589x_gpio_irq(int irq, void *dev)
 	return IRQ_HANDLED;
 }
 
-static int tc3589x_gpio_irq_map(struct irq_domain *d, unsigned int virq,
+static int tc3589x_gpio_irq_map(struct irq_domain *d, unsigned int irq,
 				irq_hw_number_t hwirq)
 {
 	struct tc3589x *tc3589x_gpio = d->host_data;
 
-	irq_set_chip_data(virq, tc3589x_gpio);
-	irq_set_chip_and_handler(virq, &tc3589x_gpio_irq_chip,
+	irq_set_chip_data(irq, tc3589x_gpio);
+	irq_set_chip_and_handler(irq, &tc3589x_gpio_irq_chip,
 				handle_simple_irq);
-	irq_set_nested_thread(virq, 1);
+	irq_set_nested_thread(irq, 1);
 #ifdef CONFIG_ARM
-	set_irq_flags(virq, IRQF_VALID);
+	set_irq_flags(irq, IRQF_VALID);
 #else
-	irq_set_noprobe(virq);
+	irq_set_noprobe(irq);
 #endif
 
 	return 0;
 }
 
-static void tc3589x_gpio_irq_unmap(struct irq_domain *d, unsigned int virq)
+static void tc3589x_gpio_irq_unmap(struct irq_domain *d, unsigned int irq)
 {
 #ifdef CONFIG_ARM
-	set_irq_flags(virq, 0);
+	set_irq_flags(irq, 0);
 #endif
-	irq_set_chip_and_handler(virq, NULL, NULL);
-	irq_set_chip_data(virq, NULL);
+	irq_set_chip_and_handler(irq, NULL, NULL);
+	irq_set_chip_data(irq, NULL);
 }
 
 static struct irq_domain_ops tc3589x_irq_ops = {
-        .map    = tc3589x_gpio_irq_map,
-        .unmap  = tc3589x_gpio_irq_unmap,
-        .xlate  = irq_domain_xlate_twocell,
+	.map    = tc3589x_gpio_irq_map,
+	.unmap  = tc3589x_gpio_irq_unmap,
+	.xlate  = irq_domain_xlate_twocell,
 };
 
 static int tc3589x_gpio_irq_init(struct tc3589x_gpio *tc3589x_gpio,
@@ -292,17 +292,15 @@ static int tc3589x_gpio_irq_init(struct tc3589x_gpio *tc3589x_gpio,
 {
 	int base = tc3589x_gpio->irq_base;
 
-	if (base) {
-		tc3589x_gpio->domain = irq_domain_add_legacy(
-			NULL, tc3589x_gpio->chip.ngpio, base,
-			0, &tc3589x_irq_ops, tc3589x_gpio);
-	}
-	else {
-		tc3589x_gpio->domain = irq_domain_add_linear(
-			np, tc3589x_gpio->chip.ngpio,
-			&tc3589x_irq_ops, tc3589x_gpio);
-	}
-
+	/*
+	 * If this results in a linear domain, irq_create_mapping() will
+	 * take care of allocating IRQ descriptors at runtime. When a base
+	 * is provided, the IRQ descriptors will be allocated when the
+	 * domain is instantiated.
+	 */
+	tc3589x_gpio->domain = irq_domain_add_simple(np,
+			tc3589x_gpio->chip.ngpio, base, &tc3589x_irq_ops,
+			tc3589x_gpio);
 	if (!tc3589x_gpio->domain) {
 		dev_err(tc3589x_gpio->dev, "Failed to create irqdomain\n");
 		return -ENOSYS;
@@ -311,7 +309,7 @@ static int tc3589x_gpio_irq_init(struct tc3589x_gpio *tc3589x_gpio,
 	return 0;
 }
 
-static int __devinit tc3589x_gpio_probe(struct platform_device *pdev)
+static int tc3589x_gpio_probe(struct platform_device *pdev)
 {
 	struct tc3589x *tc3589x = dev_get_drvdata(pdev->dev.parent);
 	struct tc3589x_gpio_platform_data *pdata;
@@ -346,7 +344,7 @@ static int __devinit tc3589x_gpio_probe(struct platform_device *pdev)
 	tc3589x_gpio->chip.base = (pdata) ? pdata->gpio_base : -1;
 
 #ifdef CONFIG_OF_GPIO
-        tc3589x_gpio->chip.of_node = np;
+	tc3589x_gpio->chip.of_node = np;
 #endif
 
 	tc3589x_gpio->irq_base = tc3589x->irq_base ?
@@ -389,7 +387,7 @@ out_free:
 	return ret;
 }
 
-static int __devexit tc3589x_gpio_remove(struct platform_device *pdev)
+static int tc3589x_gpio_remove(struct platform_device *pdev)
 {
 	struct tc3589x_gpio *tc3589x_gpio = platform_get_drvdata(pdev);
 	struct tc3589x *tc3589x = tc3589x_gpio->tc3589x;
@@ -409,7 +407,6 @@ static int __devexit tc3589x_gpio_remove(struct platform_device *pdev)
 
 	free_irq(irq, tc3589x_gpio);
 
-	platform_set_drvdata(pdev, NULL);
 	kfree(tc3589x_gpio);
 
 	return 0;
@@ -419,7 +416,7 @@ static struct platform_driver tc3589x_gpio_driver = {
 	.driver.name	= "tc3589x-gpio",
 	.driver.owner	= THIS_MODULE,
 	.probe		= tc3589x_gpio_probe,
-	.remove		= __devexit_p(tc3589x_gpio_remove),
+	.remove		= tc3589x_gpio_remove,
 };
 
 static int __init tc3589x_gpio_init(void)

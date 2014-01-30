@@ -24,24 +24,13 @@
 #define INTEL_PEG4BPFII_PID 0x10a1
 
 #define PEGII_IF_SERIES(vid, pid) \
-        ((vid==0x8086)&& \
-        ((pid==INTEL_PEG4BPII_PID)||   \
-          (pid==INTEL_PEG4BPFII_PID)))
-
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(2,6,10))
-#define pci_get_class pci_find_class
-
-#define pci_get_device pci_find_device
-
-#endif
-
-#if (LINUX_VERSION_CODE > KERNEL_VERSION(2,6,10))
-#define EXPORT_SYMBOL_NOVERS EXPORT_SYMBOL
-#endif
+	((vid == 0x8086) && \
+	 ((pid == INTEL_PEG4BPII_PID) ||   \
+	  (pid == INTEL_PEG4BPFII_PID)))
 
 #ifdef BP_VENDOR_SUPPORT
-char *bp_desc_array[] =
-    { "e1000bp", "e1000bpe", "slcm5700", "bnx2xbp", "ixgbp", "ixgbpe", NULL };
+char *bp_desc_array[] = { "e1000bp", "e1000bpe", "slcm5700",
+			"bnx2xbp", "ixgbp", "ixgbpe", NULL };
 #endif
 
 #endif

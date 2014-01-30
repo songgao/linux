@@ -240,7 +240,7 @@ void cpld_select_panel(struct channel *sc, u32 panel)
 }
 
 
-extern void cpld_set_clock(struct channel *sc, u32 mode)
+void cpld_set_clock(struct channel *sc, u32 mode)
 {
 	if (sc->p.clock_source == mode)
 		return;
@@ -338,7 +338,7 @@ void cpld_set_fractional_mode(struct channel *sc, u32 mode,
 			   SBE_2T3E3_CPLD_VAL_FRACTIONAL_MODE_2);
 		break;
 	default:
-		printk(KERN_ERR "wrong mode in set_fractional_mode\n");
+		netdev_err(sc->dev, "wrong mode in set_fractional_mode\n");
 		return;
 	}
 

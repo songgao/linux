@@ -278,7 +278,7 @@ int b43_generate_txhdr(struct b43_wldev *dev,
 	else
 		txhdr->phy_rate = b43_plcp_get_ratecode_cck(rate);
 	txhdr->mac_frame_ctl = wlhdr->frame_control;
-	memcpy(txhdr->tx_receiver, wlhdr->addr1, 6);
+	memcpy(txhdr->tx_receiver, wlhdr->addr1, ETH_ALEN);
 
 	/* Calculate duration for fallback rate */
 	if ((rate_fb == rate) ||
@@ -796,7 +796,7 @@ void b43_rx(struct b43_wldev *dev, struct sk_buff *skb, const void *_rxhdr)
 		status.mactime += mactime;
 		if (low_mactime_now <= mactime)
 			status.mactime -= 0x10000;
-		status.flag |= RX_FLAG_MACTIME_MPDU;
+		status.flag |= RX_FLAG_MACTIME_START;
 	}
 
 	chanid = (chanstat & B43_RX_CHAN_ID) >> B43_RX_CHAN_ID_SHIFT;

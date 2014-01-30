@@ -56,6 +56,7 @@ static void imx_pd_connector_destroy(struct drm_connector *connector)
 static int imx_pd_connector_get_modes(struct drm_connector *connector)
 {
 	struct imx_parallel_display *imxpd = con_to_imxpd(connector);
+	struct device_node *np = imxpd->dev->of_node;
 	int num_modes = 0;
 
 	if (imxpd->edid) {
@@ -65,6 +66,15 @@ static int imx_pd_connector_get_modes(struct drm_connector *connector)
 
 	if (imxpd->mode_valid) {
 		struct drm_display_mode *mode = drm_mode_create(connector->dev);
+		drm_mode_copy(mode, &imxpd->mode);
+		mode->type |= DRM_MODE_TYPE_DRIVER | DRM_MODE_TYPE_PREFERRED,
+		drm_mode_probed_add(connector, mode);
+		num_modes++;
+	}
+
+	if (np) {
+		struct drm_display_mode *mode = drm_mode_create(connector->dev);
+		of_get_drm_display_mode(np, &imxpd->mode, 0);
 		drm_mode_copy(mode, &imxpd->mode);
 		mode->type |= DRM_MODE_TYPE_DRIVER | DRM_MODE_TYPE_PREFERRED,
 		drm_mode_probed_add(connector, mode);
@@ -188,7 +198,7 @@ static int imx_pd_register(struct imx_parallel_display *imxpd)
 	return 0;
 }
 
-static int __devinit imx_pd_probe(struct platform_device *pdev)
+static int imx_pd_probe(struct platform_device *pdev)
 {
 	struct device_node *np = pdev->dev.of_node;
 	const u8 *edidp;
@@ -210,6 +220,8 @@ static int __devinit imx_pd_probe(struct platform_device *pdev)
 			imxpd->interface_pix_fmt = V4L2_PIX_FMT_RGB24;
 		else if (!strcmp(fmt, "rgb565"))
 			imxpd->interface_pix_fmt = V4L2_PIX_FMT_RGB565;
+		else if (!strcmp(fmt, "bgr666"))
+			imxpd->interface_pix_fmt = V4L2_PIX_FMT_BGR666;
 	}
 
 	imxpd->dev = &pdev->dev;
@@ -225,7 +237,7 @@ static int __devinit imx_pd_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static int __devexit imx_pd_remove(struct platform_device *pdev)
+static int imx_pd_remove(struct platform_device *pdev)
 {
 	struct imx_parallel_display *imxpd = platform_get_drvdata(pdev);
 	struct drm_connector *connector = &imxpd->connector;
@@ -243,10 +255,11 @@ static const struct of_device_id imx_pd_dt_ids[] = {
 	{ .compatible = "fsl,imx-parallel-display", },
 	{ /* sentinel */ }
 };
+MODULE_DEVICE_TABLE(of, imx_pd_dt_ids);
 
 static struct platform_driver imx_pd_driver = {
 	.probe		= imx_pd_probe,
-	.remove		= __devexit_p(imx_pd_remove),
+	.remove		= imx_pd_remove,
 	.driver		= {
 		.of_match_table = imx_pd_dt_ids,
 		.name	= "imx-parallel-display",
@@ -259,3 +272,4 @@ module_platform_driver(imx_pd_driver);
 MODULE_DESCRIPTION("i.MX parallel display driver");
 MODULE_AUTHOR("Sascha Hauer, Pengutronix");
 MODULE_LICENSE("GPL");
+MODULE_ALIAS("platform:imx-parallel-display");

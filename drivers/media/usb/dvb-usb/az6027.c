@@ -254,7 +254,7 @@ static const struct stb0899_s1_reg az6027_stb0899_s1_init_3[] = {
 
 
 
-struct stb0899_config az6027_stb0899_config = {
+static struct stb0899_config az6027_stb0899_config = {
 	.init_dev		= az6027_stb0899_s1_init_1,
 	.init_s2_demod		= stb0899_s2_init_2,
 	.init_s1_demod		= az6027_stb0899_s1_init_3,
@@ -264,7 +264,7 @@ struct stb0899_config az6027_stb0899_config = {
 	.demod_address 		= 0xd0, /* 0x68, 0xd0 >> 1 */
 
 	.xtal_freq		= 27000000,
-	.inversion		= IQ_SWAP_ON, /* 1 */
+	.inversion		= IQ_SWAP_ON,
 
 	.lo_clk			= 76500000,
 	.hi_clk			= 99000000,
@@ -291,14 +291,15 @@ struct stb0899_config az6027_stb0899_config = {
 	.tuner_set_rfsiggain	= NULL,
 };
 
-struct stb6100_config az6027_stb6100_config = {
+static struct stb6100_config az6027_stb6100_config = {
 	.tuner_address	= 0xc0,
 	.refclock	= 27000000,
 };
 
 
 /* check for mutex FIXME */
-int az6027_usb_in_op(struct dvb_usb_device *d, u8 req, u16 value, u16 index, u8 *b, int blen)
+static int az6027_usb_in_op(struct dvb_usb_device *d, u8 req,
+			    u16 value, u16 index, u8 *b, int blen)
 {
 	int ret = -1;
 	if (mutex_lock_interruptible(&d->usb_mutex))
@@ -1051,10 +1052,10 @@ static struct i2c_algorithm az6027_i2c_algo = {
 	.functionality = az6027_i2c_func,
 };
 
-int az6027_identify_state(struct usb_device *udev,
-			  struct dvb_usb_device_properties *props,
-			  struct dvb_usb_device_description **desc,
-			  int *cold)
+static int az6027_identify_state(struct usb_device *udev,
+				 struct dvb_usb_device_properties *props,
+				 struct dvb_usb_device_description **desc,
+				 int *cold)
 {
 	u8 *b;
 	s16 ret;

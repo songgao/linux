@@ -167,7 +167,7 @@ static inline int pdev_bad_for_parity(struct pci_dev *dev)
  * pcibios_fixup_bus - Called after each bus is probed,
  * but before its children are examined.
  */
-void __devinit pcibios_fixup_bus(struct pci_bus *bus)
+void pcibios_fixup_bus(struct pci_bus *bus)
 {
 	struct pci_dev *dev;
 	u16 features = PCI_COMMAND_SERR
@@ -250,9 +250,7 @@ void __devinit pcibios_fixup_bus(struct pci_bus *bus)
 	printk(KERN_INFO "PCI: bus%d: Fast back to back transfers %sabled\n",
 		bus->number, (features & PCI_COMMAND_FAST_BACK) ? "en" : "dis");
 }
-#ifdef CONFIG_HOTPLUG
 EXPORT_SYMBOL(pcibios_fixup_bus);
-#endif
 
 static int __init pci_common_init(void)
 {
@@ -278,11 +276,6 @@ static int __init pci_common_init(void)
 		 */
 		pci_bus_assign_resources(puv3_bus);
 	}
-
-	/*
-	 * Tell drivers about devices found.
-	 */
-	pci_bus_add_devices(puv3_bus);
 
 	return 0;
 }

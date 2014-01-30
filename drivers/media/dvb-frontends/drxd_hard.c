@@ -46,10 +46,6 @@
 #define DRX_I2C_MODEFLAGS     0xC0
 #define DRX_I2C_FLAGS         0xF0
 
-#ifndef SIZEOF_ARRAY
-#define SIZEOF_ARRAY(array) (sizeof((array))/sizeof((array)[0]))
-#endif
-
 #define DEFAULT_LOCK_TIMEOUT    1100
 
 #define DRX_CHANNEL_AUTO 0
@@ -1018,7 +1014,7 @@ static int HI_CfgCommand(struct drxd_state *state)
 		status = Write16(state, HI_RA_RAM_SRV_CMD__A,
 				 HI_RA_RAM_SRV_CMD_CONFIG, 0);
 	else
-		status = HI_Command(state, HI_RA_RAM_SRV_CMD_CONFIG, 0);
+		status = HI_Command(state, HI_RA_RAM_SRV_CMD_CONFIG, NULL);
 	mutex_unlock(&state->mutex);
 	return status;
 }
@@ -1039,7 +1035,7 @@ static int HI_ResetCommand(struct drxd_state *state)
 	status = Write16(state, HI_RA_RAM_SRV_RST_KEY__A,
 			 HI_RA_RAM_SRV_RST_KEY_ACT, 0);
 	if (status == 0)
-		status = HI_Command(state, HI_RA_RAM_SRV_CMD_RESET, 0);
+		status = HI_Command(state, HI_RA_RAM_SRV_CMD_RESET, NULL);
 	mutex_unlock(&state->mutex);
 	msleep(1);
 	return status;
@@ -1748,7 +1744,8 @@ static int DRX_Stop(struct drxd_state *state)
 	return status;
 }
 
-int SetOperationMode(struct drxd_state *state, int oMode)
+#if 0	/* Currently unused */
+static int SetOperationMode(struct drxd_state *state, int oMode)
 {
 	int status;
 
@@ -1788,6 +1785,7 @@ int SetOperationMode(struct drxd_state *state, int oMode)
 		state->operation_mode = oMode;
 	return status;
 }
+#endif
 
 static int StartDiversity(struct drxd_state *state)
 {
@@ -2612,7 +2610,7 @@ static int CDRXD(struct drxd_state *state, u32 IntermediateFrequency)
 	return 0;
 }
 
-int DRXD_init(struct drxd_state *state, const u8 * fw, u32 fw_size)
+static int DRXD_init(struct drxd_state *state, const u8 *fw, u32 fw_size)
 {
 	int status = 0;
 	u32 driverVersion;
@@ -2774,7 +2772,7 @@ int DRXD_init(struct drxd_state *state, const u8 * fw, u32 fw_size)
 	return status;
 }
 
-int DRXD_status(struct drxd_state *state, u32 * pLockStatus)
+static int DRXD_status(struct drxd_state *state, u32 *pLockStatus)
 {
 	DRX_GetLockStatus(state, pLockStatus);
 
@@ -2835,7 +2833,7 @@ static int drxd_init(struct dvb_frontend *fe)
 	int err = 0;
 
 /*	if (request_firmware(&state->fw, "drxd.fw", state->dev)<0) */
-	return DRXD_init(state, 0, 0);
+	return DRXD_init(state, NULL, 0);
 
 	err = DRXD_init(state, state->fw->data, state->fw->size);
 	release_firmware(state->fw);
@@ -2963,7 +2961,7 @@ struct dvb_frontend *drxd_attach(const struct drxd_config *config,
 		return NULL;
 	memset(state, 0, sizeof(*state));
 
-	memcpy(&state->ops, &drxd_ops, sizeof(struct dvb_frontend_ops));
+	state->ops = drxd_ops;
 	state->dev = dev;
 	state->config = *config;
 	state->i2c = i2c;
@@ -2971,13 +2969,16 @@ struct dvb_frontend *drxd_attach(const struct drxd_config *config,
 
 	mutex_init(&state->mutex);
 
-	if (Read16(state, 0, 0, 0) < 0)
+	if (Read16(state, 0, NULL, 0) < 0)
 		goto error;
 
-	memcpy(&state->frontend.ops, &drxd_ops,
-	       sizeof(struct dvb_frontend_ops));
+	state->frontend.ops = drxd_ops;
 	state->frontend.demodulator_priv = state;
 	ConfigureMPEGOutput(state, 0);
+	/* add few initialization to allow gate control */
+	CDRXD(state, state->config.IF ? state->config.IF : 36000000);
+	InitHI(state);
+
 	return &state->frontend;
 
 error:

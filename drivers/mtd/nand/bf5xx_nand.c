@@ -171,7 +171,7 @@ static struct bf5xx_nand_info *to_nand_info(struct platform_device *pdev)
 
 static struct bf5xx_nand_platform *to_nand_plat(struct platform_device *pdev)
 {
-	return pdev->dev.platform_data;
+	return dev_get_platdata(&pdev->dev);
 }
 
 /*
@@ -658,7 +658,7 @@ static int bf5xx_nand_hw_init(struct bf5xx_nand_info *info)
 /*
  * Device management interface
  */
-static int __devinit bf5xx_nand_add_partition(struct bf5xx_nand_info *info)
+static int bf5xx_nand_add_partition(struct bf5xx_nand_info *info)
 {
 	struct mtd_info *mtd = &info->mtd;
 	struct mtd_partition *parts = info->platform->partitions;
@@ -667,11 +667,9 @@ static int __devinit bf5xx_nand_add_partition(struct bf5xx_nand_info *info)
 	return mtd_device_register(mtd, parts, nr);
 }
 
-static int __devexit bf5xx_nand_remove(struct platform_device *pdev)
+static int bf5xx_nand_remove(struct platform_device *pdev)
 {
 	struct bf5xx_nand_info *info = to_nand_info(pdev);
-
-	platform_set_drvdata(pdev, NULL);
 
 	/* first thing we need to do is release all our mtds
 	 * and their partitions, then go through freeing the
@@ -725,7 +723,7 @@ static int bf5xx_nand_scan(struct mtd_info *mtd)
  * it can allocate all necessary resources then calls the
  * nand layer to look for devices
  */
-static int __devinit bf5xx_nand_probe(struct platform_device *pdev)
+static int bf5xx_nand_probe(struct platform_device *pdev)
 {
 	struct bf5xx_nand_platform *plat = to_nand_plat(pdev);
 	struct bf5xx_nand_info *info = NULL;
@@ -832,7 +830,6 @@ static int __devinit bf5xx_nand_probe(struct platform_device *pdev)
 out_err_nand_scan:
 	bf5xx_nand_dma_remove(info);
 out_err_hw_init:
-	platform_set_drvdata(pdev, NULL);
 	kfree(info);
 out_err_kzalloc:
 	peripheral_free_list(bfin_nfc_pin_req);
@@ -865,7 +862,7 @@ static int bf5xx_nand_resume(struct platform_device *dev)
 /* driver device registration */
 static struct platform_driver bf5xx_nand_driver = {
 	.probe		= bf5xx_nand_probe,
-	.remove		= __devexit_p(bf5xx_nand_remove),
+	.remove		= bf5xx_nand_remove,
 	.suspend	= bf5xx_nand_suspend,
 	.resume		= bf5xx_nand_resume,
 	.driver		= {
@@ -874,21 +871,7 @@ static struct platform_driver bf5xx_nand_driver = {
 	},
 };
 
-static int __init bf5xx_nand_init(void)
-{
-	printk(KERN_INFO "%s, Version %s (c) 2007 Analog Devices, Inc.\n",
-		DRV_DESC, DRV_VERSION);
-
-	return platform_driver_register(&bf5xx_nand_driver);
-}
-
-static void __exit bf5xx_nand_exit(void)
-{
-	platform_driver_unregister(&bf5xx_nand_driver);
-}
-
-module_init(bf5xx_nand_init);
-module_exit(bf5xx_nand_exit);
+module_platform_driver(bf5xx_nand_driver);
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR(DRV_AUTHOR);

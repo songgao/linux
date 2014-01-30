@@ -28,6 +28,7 @@
 #include <linux/sched.h>
 #include <linux/signal.h>
 #include <linux/slab.h>
+#include <linux/timekeeper_internal.h>
 #include <linux/vmalloc.h>
 
 #include <asm/cacheflush.h>
@@ -57,7 +58,10 @@ static struct page *vectors_page[1];
 static int alloc_vectors_page(void)
 {
 	extern char __kuser_helper_start[], __kuser_helper_end[];
+	extern char __aarch32_sigret_code_start[], __aarch32_sigret_code_end[];
+
 	int kuser_sz = __kuser_helper_end - __kuser_helper_start;
+	int sigret_sz = __aarch32_sigret_code_end - __aarch32_sigret_code_start;
 	unsigned long vpage;
 
 	vpage = get_zeroed_page(GFP_ATOMIC);
@@ -71,7 +75,7 @@ static int alloc_vectors_page(void)
 
 	/* sigreturn code */
 	memcpy((void *)vpage + AARCH32_KERN_SIGRET_CODE_OFFSET,
-		aarch32_sigret_code, sizeof(aarch32_sigret_code));
+               __aarch32_sigret_code_start, sigret_sz);
 
 	flush_icache_range(vpage, vpage + PAGE_SIZE);
 	vectors_page[0] = virt_to_page(vpage);
@@ -222,11 +226,10 @@ struct vm_area_struct *get_gate_vma(struct mm_struct *mm)
 /*
  * Update the vDSO data page to keep in sync with kernel timekeeping.
  */
-void update_vsyscall(struct timespec *ts, struct timespec *wtm,
-		     struct clocksource *clock, u32 mult)
+void update_vsyscall(struct timekeeper *tk)
 {
 	struct timespec xtime_coarse;
-	u32 use_syscall = strcmp(clock->name, "arch_sys_counter");
+	u32 use_syscall = strcmp(tk->clock->name, "arch_sys_counter");
 
 	++vdso_data->tb_seq_count;
 	smp_wmb();
@@ -237,13 +240,13 @@ void update_vsyscall(struct timespec *ts, struct timespec *wtm,
 	vdso_data->xtime_coarse_nsec		= xtime_coarse.tv_nsec;
 
 	if (!use_syscall) {
-		vdso_data->cs_cycle_last	= clock->cycle_last;
-		vdso_data->xtime_clock_sec	= ts->tv_sec;
-		vdso_data->xtime_clock_nsec	= ts->tv_nsec;
-		vdso_data->cs_mult		= mult;
-		vdso_data->cs_shift		= clock->shift;
-		vdso_data->wtm_clock_sec	= wtm->tv_sec;
-		vdso_data->wtm_clock_nsec	= wtm->tv_nsec;
+		vdso_data->cs_cycle_last	= tk->clock->cycle_last;
+		vdso_data->xtime_clock_sec	= tk->xtime_sec;
+		vdso_data->xtime_clock_nsec	= tk->xtime_nsec;
+		vdso_data->cs_mult		= tk->mult;
+		vdso_data->cs_shift		= tk->shift;
+		vdso_data->wtm_clock_sec	= tk->wall_to_monotonic.tv_sec;
+		vdso_data->wtm_clock_nsec	= tk->wall_to_monotonic.tv_nsec;
 	}
 
 	smp_wmb();
@@ -252,10 +255,6 @@ void update_vsyscall(struct timespec *ts, struct timespec *wtm,
 
 void update_vsyscall_tz(void)
 {
-	++vdso_data->tb_seq_count;
-	smp_wmb();
 	vdso_data->tz_minuteswest	= sys_tz.tz_minuteswest;
 	vdso_data->tz_dsttime		= sys_tz.tz_dsttime;
-	smp_wmb();
-	++vdso_data->tb_seq_count;
 }

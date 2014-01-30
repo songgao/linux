@@ -523,7 +523,7 @@ void cdv_intel_attach_force_audio_property(struct drm_connector *connector)
 
 		dev_priv->force_audio_property = prop;
 	}
-	drm_connector_attach_property(connector, prop, 0);
+	drm_object_attach_property(&connector->base, prop, 0);
 }
 
 
@@ -553,7 +553,7 @@ void cdv_intel_attach_broadcast_rgb_property(struct drm_connector *connector)
 		dev_priv->broadcast_rgb_property = prop;
 	}
 
-	drm_connector_attach_property(connector, prop, 0);
+	drm_object_attach_property(&connector->base, prop, 0);
 }
 
 /* Cedarview */
@@ -634,6 +634,7 @@ const struct psb_ops cdv_chip_ops = {
 	.crtcs = 2,
 	.hdmi_mask = (1 << 0) | (1 << 1),
 	.lvds_mask = (1 << 1),
+	.sdvo_mask = (1 << 0),
 	.cursor_needs_phys = 0,
 	.sgx_offset = MRST_SGX_OFFSET,
 	.chip_setup = cdv_chip_setup,
@@ -641,6 +642,7 @@ const struct psb_ops cdv_chip_ops = {
 
 	.crtc_helper = &cdv_intel_helper_funcs,
 	.crtc_funcs = &cdv_intel_crtc_funcs,
+	.clock_funcs = &cdv_clock_funcs,
 
 	.output_init = cdv_output_init,
 	.hotplug = cdv_hotplug_event,
@@ -655,4 +657,6 @@ const struct psb_ops cdv_chip_ops = {
 	.restore_regs = cdv_restore_display_registers,
 	.power_down = cdv_power_down,
 	.power_up = cdv_power_up,
+	.update_wm = cdv_update_wm,
+	.disable_sr = cdv_disable_sr,
 };

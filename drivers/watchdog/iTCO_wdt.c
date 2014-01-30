@@ -56,8 +56,6 @@
 #include <linux/types.h>		/* For standard types (like size_t) */
 #include <linux/errno.h>		/* For the -ENODEV/... values */
 #include <linux/kernel.h>		/* For printk/panic/... */
-#include <linux/miscdevice.h>		/* For MODULE_ALIAS_MISCDEV
-							(WATCHDOG_MINOR) */
 #include <linux/watchdog.h>		/* For the watchdog specific items */
 #include <linux/init.h>			/* For __init/__exit/... */
 #include <linux/fs.h>			/* For file operations */
@@ -364,7 +362,7 @@ static struct watchdog_device iTCO_wdt_watchdog_dev = {
  *	Init & exit routines
  */
 
-static void __devexit iTCO_wdt_cleanup(void)
+static void iTCO_wdt_cleanup(void)
 {
 	/* Stop the timer before we leave */
 	if (!nowayout)
@@ -390,11 +388,11 @@ static void __devexit iTCO_wdt_cleanup(void)
 	iTCO_wdt_private.gcs = NULL;
 }
 
-static int __devinit iTCO_wdt_probe(struct platform_device *dev)
+static int iTCO_wdt_probe(struct platform_device *dev)
 {
 	int ret = -ENODEV;
 	unsigned long val32;
-	struct lpc_ich_info *ich_info = dev->dev.platform_data;
+	struct lpc_ich_info *ich_info = dev_get_platdata(&dev->dev);
 
 	if (!ich_info)
 		goto out;
@@ -533,7 +531,7 @@ out:
 	return ret;
 }
 
-static int __devexit iTCO_wdt_remove(struct platform_device *dev)
+static int iTCO_wdt_remove(struct platform_device *dev)
 {
 	if (iTCO_wdt_private.tco_res || iTCO_wdt_private.smi_res)
 		iTCO_wdt_cleanup();
@@ -548,7 +546,7 @@ static void iTCO_wdt_shutdown(struct platform_device *dev)
 
 static struct platform_driver iTCO_wdt_driver = {
 	.probe          = iTCO_wdt_probe,
-	.remove         = __devexit_p(iTCO_wdt_remove),
+	.remove         = iTCO_wdt_remove,
 	.shutdown       = iTCO_wdt_shutdown,
 	.driver         = {
 		.owner  = THIS_MODULE,
@@ -582,5 +580,4 @@ MODULE_AUTHOR("Wim Van Sebroeck <wim@iguana.be>");
 MODULE_DESCRIPTION("Intel TCO WatchDog Timer Driver");
 MODULE_VERSION(DRV_VERSION);
 MODULE_LICENSE("GPL");
-MODULE_ALIAS_MISCDEV(WATCHDOG_MINOR);
 MODULE_ALIAS("platform:" DRV_NAME);

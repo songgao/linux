@@ -31,6 +31,8 @@
  * IN THE SOFTWARE.
  */
 
+#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
+
 #include <linux/unistd.h>
 #include <linux/errno.h>
 #include <linux/types.h>
@@ -48,7 +50,6 @@
 #include <xen/xenbus.h>
 #include <xen/xen.h>
 #include "xenbus_comms.h"
-#include <asm/xen/hypervisor.h>
 
 struct xs_stored_msg {
 	struct list_head list;
@@ -130,9 +131,8 @@ static int get_error(const char *errorstring)
 
 	for (i = 0; strcmp(errorstring, xsd_errors[i].errstring) != 0; i++) {
 		if (i == ARRAY_SIZE(xsd_errors) - 1) {
-			printk(KERN_WARNING
-			       "XENBUS xen store gave: unknown error %s",
-			       errorstring);
+			pr_warn("xen store gave: unknown error %s\n",
+				errorstring);
 			return EINVAL;
 		}
 	}
@@ -273,10 +273,8 @@ static void *xs_talkv(struct xenbus_transaction t,
 	}
 
 	if (msg.type != type) {
-		if (printk_ratelimit())
-			printk(KERN_WARNING
-			       "XENBUS unexpected type [%d], expected [%d]\n",
-			       msg.type, type);
+		pr_warn_ratelimited("unexpected type [%d], expected [%d]\n",
+				    msg.type, type);
 		kfree(ret);
 		return ERR_PTR(-EINVAL);
 	}
@@ -625,8 +623,9 @@ static struct xenbus_watch *find_watch(const char *token)
  * so if we are running on anything older than 4 do not attempt to read
  * control/platform-feature-xs_reset_watches.
  */
-static bool xen_strict_xenbus_quirk()
+static bool xen_strict_xenbus_quirk(void)
 {
+#ifdef CONFIG_X86
 	uint32_t eax, ebx, ecx, edx, base;
 
 	base = xen_cpuid_base();
@@ -634,6 +633,7 @@ static bool xen_strict_xenbus_quirk()
 
 	if ((eax >> 16) < 4)
 		return true;
+#endif
 	return false;
 
 }
@@ -654,7 +654,7 @@ static void xs_reset_watches(void)
 
 	err = xs_error(xs_single(XBT_NIL, XS_RESET_WATCHES, "", NULL));
 	if (err && err != -EEXIST)
-		printk(KERN_WARNING "xs_reset_watches failed: %d\n", err);
+		pr_warn("xs_reset_watches failed: %d\n", err);
 }
 
 /* Register callback to watch this node. */
@@ -704,9 +704,7 @@ void unregister_xenbus_watch(struct xenbus_watch *watch)
 
 	err = xs_unwatch(watch->node, token);
 	if (err)
-		printk(KERN_WARNING
-		       "XENBUS Failed to release watch %s: %i\n",
-		       watch->node, err);
+		pr_warn("Failed to release watch %s: %i\n", watch->node, err);
 
 	up_read(&xs_state.watch_mutex);
 
@@ -900,8 +898,7 @@ static int xenbus_thread(void *unused)
 	for (;;) {
 		err = process_msg();
 		if (err)
-			printk(KERN_WARNING "XENBUS error %d while reading "
-			       "message\n", err);
+			pr_warn("error %d while reading message\n", err);
 		if (kthread_should_stop())
 			break;
 	}

@@ -102,7 +102,7 @@ static int technisat_usb2_i2c_access(struct usb_device *udev,
 	if (rxlen > 62) {
 		err("i2c RX buffer can't exceed 62 bytes (dev 0x%02x)",
 				device_addr);
-		txlen = 62;
+		rxlen = 62;
 	}
 
 	b[0] = I2C_SPEED_100KHZ_BIT;
@@ -732,7 +732,7 @@ static struct dvb_usb_device_properties technisat_usb2_devices = {
 		.rc_codes    = RC_MAP_TECHNISAT_USB2,
 		.module_name = "technisat-usb2",
 		.rc_query    = technisat_usb2_rc_query,
-		.allowed_protos = RC_TYPE_ALL,
+		.allowed_protos = RC_BIT_ALL,
 		.driver_type    = RC_DRIVER_IR_RAW,
 	}
 };

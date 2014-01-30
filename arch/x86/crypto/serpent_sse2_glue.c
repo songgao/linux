@@ -34,6 +34,7 @@
 #include <linux/types.h>
 #include <linux/crypto.h>
 #include <linux/err.h>
+#include <crypto/ablk_helper.h>
 #include <crypto/algapi.h>
 #include <crypto/serpent.h>
 #include <crypto/cryptd.h>
@@ -42,7 +43,6 @@
 #include <crypto/lrw.h>
 #include <crypto/xts.h>
 #include <asm/crypto/serpent-sse2.h>
-#include <asm/crypto/ablk_helper.h>
 #include <asm/crypto/glue_helper.h>
 
 static void serpent_decrypt_cbc_xway(void *ctx, u128 *dst, const u128 *src)
@@ -59,19 +59,19 @@ static void serpent_decrypt_cbc_xway(void *ctx, u128 *dst, const u128 *src)
 		u128_xor(dst + (j + 1), dst + (j + 1), ivs + j);
 }
 
-static void serpent_crypt_ctr(void *ctx, u128 *dst, const u128 *src, u128 *iv)
+static void serpent_crypt_ctr(void *ctx, u128 *dst, const u128 *src, le128 *iv)
 {
 	be128 ctrblk;
 
-	u128_to_be128(&ctrblk, iv);
-	u128_inc(iv);
+	le128_to_be128(&ctrblk, iv);
+	le128_inc(iv);
 
 	__serpent_encrypt(ctx, (u8 *)&ctrblk, (u8 *)&ctrblk);
 	u128_xor(dst, src, (u128 *)&ctrblk);
 }
 
 static void serpent_crypt_ctr_xway(void *ctx, u128 *dst, const u128 *src,
-				   u128 *iv)
+				   le128 *iv)
 {
 	be128 ctrblks[SERPENT_PARALLEL_BLOCKS];
 	unsigned int i;
@@ -80,8 +80,8 @@ static void serpent_crypt_ctr_xway(void *ctx, u128 *dst, const u128 *src,
 		if (dst != src)
 			dst[i] = src[i];
 
-		u128_to_be128(&ctrblks[i], iv);
-		u128_inc(iv);
+		le128_to_be128(&ctrblks[i], iv);
+		le128_inc(iv);
 	}
 
 	serpent_enc_blk_xway_xor(ctx, (u8 *)dst, (u8 *)ctrblks);

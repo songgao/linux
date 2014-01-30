@@ -295,6 +295,13 @@ static void carl9170_usb_rx_irq_complete(struct urb *urb)
 		goto resubmit;
 	}
 
+	/*
+	 * While the carl9170 firmware does not use this EP, the
+	 * firmware loader in the EEPROM unfortunately does.
+	 * Therefore we need to be ready to handle out-of-band
+	 * responses and traps in case the firmware crashed and
+	 * the loader took over again.
+	 */
 	carl9170_handle_command_response(ar, urb->transfer_buffer,
 					 urb->actual_length);
 
@@ -766,7 +773,7 @@ void carl9170_usb_stop(struct ar9170 *ar)
 	complete_all(&ar->cmd_wait);
 
 	/* This is required to prevent an early completion on _start */
-	INIT_COMPLETION(ar->cmd_wait);
+	reinit_completion(&ar->cmd_wait);
 
 	/*
 	 * Note:

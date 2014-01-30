@@ -22,7 +22,7 @@
 #include <linux/videodev2.h>
 
 #include <media/soc_camera.h>
-#include <media/v4l2-chip-ident.h>
+#include <media/v4l2-clk.h>
 #include <media/v4l2-subdev.h>
 #include <media/v4l2-ctrls.h>
 
@@ -303,8 +303,8 @@ struct ov2640_priv {
 	struct v4l2_subdev		subdev;
 	struct v4l2_ctrl_handler	hdl;
 	enum v4l2_mbus_pixelcode	cfmt_code;
+	struct v4l2_clk			*clk;
 	const struct ov2640_win_size	*win;
-	int				model;
 };
 
 /*
@@ -586,9 +586,20 @@ static const struct regval_list ov2640_format_change_preamble_regs[] = {
 	ENDMARKER,
 };
 
-static const struct regval_list ov2640_yuv422_regs[] = {
+static const struct regval_list ov2640_yuyv_regs[] = {
+	{ IMAGE_MODE, IMAGE_MODE_YUV422 },
+	{ 0xd7, 0x03 },
+	{ 0x33, 0xa0 },
+	{ 0xe5, 0x1f },
+	{ 0xe1, 0x67 },
+	{ RESET,  0x00 },
+	{ R_BYPASS, R_BYPASS_USE_DSP },
+	ENDMARKER,
+};
+
+static const struct regval_list ov2640_uyvy_regs[] = {
 	{ IMAGE_MODE, IMAGE_MODE_LBYTE_FIRST | IMAGE_MODE_YUV422 },
-	{ 0xD7, 0x01 },
+	{ 0xd7, 0x01 },
 	{ 0x33, 0xa0 },
 	{ 0xe1, 0x67 },
 	{ RESET,  0x00 },
@@ -596,7 +607,15 @@ static const struct regval_list ov2640_yuv422_regs[] = {
 	ENDMARKER,
 };
 
-static const struct regval_list ov2640_rgb565_regs[] = {
+static const struct regval_list ov2640_rgb565_be_regs[] = {
+	{ IMAGE_MODE, IMAGE_MODE_RGB565 },
+	{ 0xd7, 0x03 },
+	{ RESET,  0x00 },
+	{ R_BYPASS, R_BYPASS_USE_DSP },
+	ENDMARKER,
+};
+
+static const struct regval_list ov2640_rgb565_le_regs[] = {
 	{ IMAGE_MODE, IMAGE_MODE_LBYTE_FIRST | IMAGE_MODE_RGB565 },
 	{ 0xd7, 0x03 },
 	{ RESET,  0x00 },
@@ -605,7 +624,9 @@ static const struct regval_list ov2640_rgb565_regs[] = {
 };
 
 static enum v4l2_mbus_pixelcode ov2640_codes[] = {
+	V4L2_MBUS_FMT_YUYV8_2X8,
 	V4L2_MBUS_FMT_UYVY8_2X8,
+	V4L2_MBUS_FMT_RGB565_2X8_BE,
 	V4L2_MBUS_FMT_RGB565_2X8_LE,
 };
 
@@ -702,18 +723,6 @@ static int ov2640_s_ctrl(struct v4l2_ctrl *ctrl)
 	return -EINVAL;
 }
 
-static int ov2640_g_chip_ident(struct v4l2_subdev *sd,
-			       struct v4l2_dbg_chip_ident *id)
-{
-	struct i2c_client *client = v4l2_get_subdevdata(sd);
-	struct ov2640_priv *priv = to_ov2640(client);
-
-	id->ident    = priv->model;
-	id->revision = 0;
-
-	return 0;
-}
-
 #ifdef CONFIG_VIDEO_ADV_DEBUG
 static int ov2640_g_register(struct v4l2_subdev *sd,
 			     struct v4l2_dbg_register *reg)
@@ -735,7 +744,7 @@ static int ov2640_g_register(struct v4l2_subdev *sd,
 }
 
 static int ov2640_s_register(struct v4l2_subdev *sd,
-			     struct v4l2_dbg_register *reg)
+			     const struct v4l2_dbg_register *reg)
 {
 	struct i2c_client *client = v4l2_get_subdevdata(sd);
 
@@ -750,9 +759,10 @@ static int ov2640_s_register(struct v4l2_subdev *sd,
 static int ov2640_s_power(struct v4l2_subdev *sd, int on)
 {
 	struct i2c_client *client = v4l2_get_subdevdata(sd);
-	struct soc_camera_link *icl = soc_camera_i2c_to_link(client);
+	struct soc_camera_subdev_desc *ssdd = soc_camera_i2c_to_desc(client);
+	struct ov2640_priv *priv = to_ov2640(client);
 
-	return soc_camera_set_power(&client->dev, icl, on);
+	return soc_camera_set_power(&client->dev, ssdd, priv->clk, on);
 }
 
 /* Select the nearest higher resolution for capture */
@@ -787,14 +797,22 @@ static int ov2640_set_params(struct i2c_client *client, u32 *width, u32 *height,
 	/* select format */
 	priv->cfmt_code = 0;
 	switch (code) {
+	case V4L2_MBUS_FMT_RGB565_2X8_BE:
+		dev_dbg(&client->dev, "%s: Selected cfmt RGB565 BE", __func__);
+		selected_cfmt_regs = ov2640_rgb565_be_regs;
+		break;
 	case V4L2_MBUS_FMT_RGB565_2X8_LE:
-		dev_dbg(&client->dev, "%s: Selected cfmt RGB565", __func__);
-		selected_cfmt_regs = ov2640_rgb565_regs;
+		dev_dbg(&client->dev, "%s: Selected cfmt RGB565 LE", __func__);
+		selected_cfmt_regs = ov2640_rgb565_le_regs;
+		break;
+	case V4L2_MBUS_FMT_YUYV8_2X8:
+		dev_dbg(&client->dev, "%s: Selected cfmt YUYV (YUV422)", __func__);
+		selected_cfmt_regs = ov2640_yuyv_regs;
 		break;
 	default:
 	case V4L2_MBUS_FMT_UYVY8_2X8:
-		dev_dbg(&client->dev, "%s: Selected cfmt YUV422", __func__);
-		selected_cfmt_regs = ov2640_yuv422_regs;
+		dev_dbg(&client->dev, "%s: Selected cfmt UYVY", __func__);
+		selected_cfmt_regs = ov2640_uyvy_regs;
 	}
 
 	/* reset hardware */
@@ -859,10 +877,12 @@ static int ov2640_g_fmt(struct v4l2_subdev *sd,
 	mf->code	= priv->cfmt_code;
 
 	switch (mf->code) {
+	case V4L2_MBUS_FMT_RGB565_2X8_BE:
 	case V4L2_MBUS_FMT_RGB565_2X8_LE:
 		mf->colorspace = V4L2_COLORSPACE_SRGB;
 		break;
 	default:
+	case V4L2_MBUS_FMT_YUYV8_2X8:
 	case V4L2_MBUS_FMT_UYVY8_2X8:
 		mf->colorspace = V4L2_COLORSPACE_JPEG;
 	}
@@ -879,11 +899,13 @@ static int ov2640_s_fmt(struct v4l2_subdev *sd,
 
 
 	switch (mf->code) {
+	case V4L2_MBUS_FMT_RGB565_2X8_BE:
 	case V4L2_MBUS_FMT_RGB565_2X8_LE:
 		mf->colorspace = V4L2_COLORSPACE_SRGB;
 		break;
 	default:
 		mf->code = V4L2_MBUS_FMT_UYVY8_2X8;
+	case V4L2_MBUS_FMT_YUYV8_2X8:
 	case V4L2_MBUS_FMT_UYVY8_2X8:
 		mf->colorspace = V4L2_COLORSPACE_JPEG;
 	}
@@ -896,21 +918,21 @@ static int ov2640_s_fmt(struct v4l2_subdev *sd,
 static int ov2640_try_fmt(struct v4l2_subdev *sd,
 			  struct v4l2_mbus_framefmt *mf)
 {
-	const struct ov2640_win_size *win;
-
 	/*
-	 * select suitable win
+	 * select suitable win, but don't store it
 	 */
-	win = ov2640_select_win(&mf->width, &mf->height);
+	ov2640_select_win(&mf->width, &mf->height);
 
 	mf->field	= V4L2_FIELD_NONE;
 
 	switch (mf->code) {
+	case V4L2_MBUS_FMT_RGB565_2X8_BE:
 	case V4L2_MBUS_FMT_RGB565_2X8_LE:
 		mf->colorspace = V4L2_COLORSPACE_SRGB;
 		break;
 	default:
 		mf->code = V4L2_MBUS_FMT_UYVY8_2X8;
+	case V4L2_MBUS_FMT_YUYV8_2X8:
 	case V4L2_MBUS_FMT_UYVY8_2X8:
 		mf->colorspace = V4L2_COLORSPACE_JPEG;
 	}
@@ -976,7 +998,6 @@ static int ov2640_video_probe(struct i2c_client *client)
 	switch (VERSION(pid, ver)) {
 	case PID_OV2640:
 		devname     = "ov2640";
-		priv->model = V4L2_IDENT_OV2640;
 		break;
 	default:
 		dev_err(&client->dev,
@@ -1001,7 +1022,6 @@ static const struct v4l2_ctrl_ops ov2640_ctrl_ops = {
 };
 
 static struct v4l2_subdev_core_ops ov2640_subdev_core_ops = {
-	.g_chip_ident	= ov2640_g_chip_ident,
 #ifdef CONFIG_VIDEO_ADV_DEBUG
 	.g_register	= ov2640_g_register,
 	.s_register	= ov2640_s_register,
@@ -1013,13 +1033,13 @@ static int ov2640_g_mbus_config(struct v4l2_subdev *sd,
 				struct v4l2_mbus_config *cfg)
 {
 	struct i2c_client *client = v4l2_get_subdevdata(sd);
-	struct soc_camera_link *icl = soc_camera_i2c_to_link(client);
+	struct soc_camera_subdev_desc *ssdd = soc_camera_i2c_to_desc(client);
 
 	cfg->flags = V4L2_MBUS_PCLK_SAMPLE_RISING | V4L2_MBUS_MASTER |
 		V4L2_MBUS_VSYNC_ACTIVE_HIGH | V4L2_MBUS_HSYNC_ACTIVE_HIGH |
 		V4L2_MBUS_DATA_ACTIVE_HIGH;
 	cfg->type = V4L2_MBUS_PARALLEL;
-	cfg->flags = soc_camera_apply_board_flags(icl, cfg);
+	cfg->flags = soc_camera_apply_board_flags(ssdd, cfg);
 
 	return 0;
 }
@@ -1047,11 +1067,11 @@ static int ov2640_probe(struct i2c_client *client,
 			const struct i2c_device_id *did)
 {
 	struct ov2640_priv	*priv;
-	struct soc_camera_link	*icl = soc_camera_i2c_to_link(client);
+	struct soc_camera_subdev_desc *ssdd = soc_camera_i2c_to_desc(client);
 	struct i2c_adapter	*adapter = to_i2c_adapter(client->dev.parent);
 	int			ret;
 
-	if (!icl) {
+	if (!ssdd) {
 		dev_err(&adapter->dev,
 			"OV2640: Missing platform_data for driver\n");
 		return -EINVAL;
@@ -1063,7 +1083,7 @@ static int ov2640_probe(struct i2c_client *client,
 		return -EIO;
 	}
 
-	priv = kzalloc(sizeof(struct ov2640_priv), GFP_KERNEL);
+	priv = devm_kzalloc(&client->dev, sizeof(struct ov2640_priv), GFP_KERNEL);
 	if (!priv) {
 		dev_err(&adapter->dev,
 			"Failed to allocate memory for private data!\n");
@@ -1077,17 +1097,20 @@ static int ov2640_probe(struct i2c_client *client,
 	v4l2_ctrl_new_std(&priv->hdl, &ov2640_ctrl_ops,
 			V4L2_CID_HFLIP, 0, 1, 1, 0);
 	priv->subdev.ctrl_handler = &priv->hdl;
-	if (priv->hdl.error) {
-		int err = priv->hdl.error;
+	if (priv->hdl.error)
+		return priv->hdl.error;
 
-		kfree(priv);
-		return err;
+	priv->clk = v4l2_clk_get(&client->dev, "mclk");
+	if (IS_ERR(priv->clk)) {
+		ret = PTR_ERR(priv->clk);
+		goto eclkget;
 	}
 
 	ret = ov2640_video_probe(client);
 	if (ret) {
+		v4l2_clk_put(priv->clk);
+eclkget:
 		v4l2_ctrl_handler_free(&priv->hdl);
-		kfree(priv);
 	} else {
 		dev_info(&adapter->dev, "OV2640 Probed\n");
 	}
@@ -1099,9 +1122,9 @@ static int ov2640_remove(struct i2c_client *client)
 {
 	struct ov2640_priv       *priv = to_ov2640(client);
 
+	v4l2_clk_put(priv->clk);
 	v4l2_device_unregister_subdev(&priv->subdev);
 	v4l2_ctrl_handler_free(&priv->hdl);
-	kfree(priv);
 	return 0;
 }
 

@@ -36,7 +36,7 @@ struct spear_sdhci {
 };
 
 /* sdhci ops */
-static struct sdhci_ops sdhci_pltfm_ops = {
+static const struct sdhci_ops sdhci_pltfm_ops = {
 	/* Nothing to do for now. */
 };
 
@@ -71,8 +71,7 @@ static irqreturn_t sdhci_gpio_irq(int irq, void *dev_id)
 }
 
 #ifdef CONFIG_OF
-static struct sdhci_plat_data * __devinit
-sdhci_probe_config_dt(struct platform_device *pdev)
+static struct sdhci_plat_data *sdhci_probe_config_dt(struct platform_device *pdev)
 {
 	struct device_node *np = pdev->dev.of_node;
 	struct sdhci_plat_data *pdata = NULL;
@@ -96,14 +95,13 @@ sdhci_probe_config_dt(struct platform_device *pdev)
 	return pdata;
 }
 #else
-static struct sdhci_plat_data * __devinit
-sdhci_probe_config_dt(struct platform_device *pdev)
+static struct sdhci_plat_data *sdhci_probe_config_dt(struct platform_device *pdev)
 {
 	return ERR_PTR(-ENOSYS);
 }
 #endif
 
-static int __devinit sdhci_probe(struct platform_device *pdev)
+static int sdhci_probe(struct platform_device *pdev)
 {
 	struct device_node *np = pdev->dev.of_node;
 	struct sdhci_host *host;
@@ -145,6 +143,11 @@ static int __devinit sdhci_probe(struct platform_device *pdev)
 		dev_dbg(&pdev->dev, "Error enabling clock\n");
 		goto put_clk;
 	}
+
+	ret = clk_set_rate(sdhci->clk, 50000000);
+	if (ret)
+		dev_dbg(&pdev->dev, "Error setting desired clk, clk=%lu\n",
+				clk_get_rate(sdhci->clk));
 
 	if (np) {
 		sdhci->data = sdhci_probe_config_dt(pdev);
@@ -255,7 +258,6 @@ static int __devinit sdhci_probe(struct platform_device *pdev)
 	return 0;
 
 set_drvdata:
-	platform_set_drvdata(pdev, NULL);
 	sdhci_remove_host(host, 1);
 free_host:
 	sdhci_free_host(host);
@@ -268,14 +270,13 @@ err:
 	return ret;
 }
 
-static int __devexit sdhci_remove(struct platform_device *pdev)
+static int sdhci_remove(struct platform_device *pdev)
 {
 	struct sdhci_host *host = platform_get_drvdata(pdev);
 	struct spear_sdhci *sdhci = dev_get_platdata(&pdev->dev);
 	int dead = 0;
 	u32 scratch;
 
-	platform_set_drvdata(pdev, NULL);
 	scratch = readl(host->ioaddr + SDHCI_INT_STATUS);
 	if (scratch == (u32)-1)
 		dead = 1;
@@ -288,7 +289,7 @@ static int __devexit sdhci_remove(struct platform_device *pdev)
 	return 0;
 }
 
-#ifdef CONFIG_PM
+#ifdef CONFIG_PM_SLEEP
 static int sdhci_suspend(struct device *dev)
 {
 	struct sdhci_host *host = dev_get_drvdata(dev);
@@ -297,7 +298,7 @@ static int sdhci_suspend(struct device *dev)
 
 	ret = sdhci_suspend_host(host);
 	if (!ret)
-		clk_disable_unprepare(sdhci->clk);
+		clk_disable(sdhci->clk);
 
 	return ret;
 }
@@ -308,7 +309,7 @@ static int sdhci_resume(struct device *dev)
 	struct spear_sdhci *sdhci = dev_get_platdata(dev);
 	int ret;
 
-	ret = clk_prepare_enable(sdhci->clk);
+	ret = clk_enable(sdhci->clk);
 	if (ret) {
 		dev_dbg(dev, "Resume: Error enabling clock\n");
 		return ret;
@@ -336,7 +337,7 @@ static struct platform_driver sdhci_driver = {
 		.of_match_table = of_match_ptr(sdhci_spear_id_table),
 	},
 	.probe		= sdhci_probe,
-	.remove		= __devexit_p(sdhci_remove),
+	.remove		= sdhci_remove,
 };
 
 module_platform_driver(sdhci_driver);

@@ -60,8 +60,7 @@ static const struct hc_driver uhci_platform_hc_driver = {
 	.hub_control =		uhci_hub_control,
 };
 
-
-static int __devinit uhci_hcd_platform_probe(struct platform_device *pdev)
+static int uhci_hcd_platform_probe(struct platform_device *pdev)
 {
 	struct usb_hcd *hcd;
 	struct uhci_hcd	*uhci;
@@ -70,6 +69,15 @@ static int __devinit uhci_hcd_platform_probe(struct platform_device *pdev)
 
 	if (usb_disabled())
 		return -ENODEV;
+
+	/*
+	 * Right now device-tree probed devices don't get dma_mask set.
+	 * Since shared usb code relies on it, set it here for now.
+	 * Once we have dma capability bindings this can go away.
+	 */
+	ret = dma_coerce_mask_and_coherent(&pdev->dev, DMA_BIT_MASK(32));
+	if (ret)
+		return ret;
 
 	hcd = usb_create_hcd(&uhci_platform_hc_driver, &pdev->dev,
 			pdev->name);
@@ -96,8 +104,7 @@ static int __devinit uhci_hcd_platform_probe(struct platform_device *pdev)
 
 	uhci->regs = hcd->regs;
 
-	ret = usb_add_hcd(hcd, pdev->resource[1].start, IRQF_DISABLED |
-								IRQF_SHARED);
+	ret = usb_add_hcd(hcd, pdev->resource[1].start, IRQF_SHARED);
 	if (ret)
 		goto err_uhci;
 
@@ -121,7 +128,6 @@ static int uhci_hcd_platform_remove(struct platform_device *pdev)
 	iounmap(hcd->regs);
 	release_mem_region(hcd->rsrc_start, hcd->rsrc_len);
 	usb_put_hcd(hcd);
-	platform_set_drvdata(pdev, NULL);
 
 	return 0;
 }
@@ -135,7 +141,7 @@ static int uhci_hcd_platform_remove(struct platform_device *pdev)
  */
 static void uhci_hcd_platform_shutdown(struct platform_device *op)
 {
-	struct usb_hcd *hcd = dev_get_drvdata(&op->dev);
+	struct usb_hcd *hcd = platform_get_drvdata(op);
 
 	uhci_hc_died(hcd_to_uhci(hcd));
 }
@@ -152,6 +158,6 @@ static struct platform_driver uhci_platform_driver = {
 	.driver = {
 		.name = "platform-uhci",
 		.owner = THIS_MODULE,
-		.of_match_table = of_match_ptr(platform_uhci_ids),
+		.of_match_table = platform_uhci_ids,
 	},
 };

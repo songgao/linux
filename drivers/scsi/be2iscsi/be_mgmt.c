@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2005 - 2011 Emulex
+ * Copyright (C) 2005 - 2013 Emulex
  * All rights reserved.
  *
  * This program is free software; you can redistribute it and/or
@@ -22,6 +22,138 @@
 #include <scsi/scsi_bsg_iscsi.h>
 #include "be_mgmt.h"
 #include "be_iscsi.h"
+#include "be_main.h"
+
+/* UE Status Low CSR */
+static const char * const desc_ue_status_low[] = {
+	"CEV",
+	"CTX",
+	"DBUF",
+	"ERX",
+	"Host",
+	"MPU",
+	"NDMA",
+	"PTC ",
+	"RDMA ",
+	"RXF ",
+	"RXIPS ",
+	"RXULP0 ",
+	"RXULP1 ",
+	"RXULP2 ",
+	"TIM ",
+	"TPOST ",
+	"TPRE ",
+	"TXIPS ",
+	"TXULP0 ",
+	"TXULP1 ",
+	"UC ",
+	"WDMA ",
+	"TXULP2 ",
+	"HOST1 ",
+	"P0_OB_LINK ",
+	"P1_OB_LINK ",
+	"HOST_GPIO ",
+	"MBOX ",
+	"AXGMAC0",
+	"AXGMAC1",
+	"JTAG",
+	"MPU_INTPEND"
+};
+
+/* UE Status High CSR */
+static const char * const desc_ue_status_hi[] = {
+	"LPCMEMHOST",
+	"MGMT_MAC",
+	"PCS0ONLINE",
+	"MPU_IRAM",
+	"PCS1ONLINE",
+	"PCTL0",
+	"PCTL1",
+	"PMEM",
+	"RR",
+	"TXPB",
+	"RXPP",
+	"XAUI",
+	"TXP",
+	"ARM",
+	"IPC",
+	"HOST2",
+	"HOST3",
+	"HOST4",
+	"HOST5",
+	"HOST6",
+	"HOST7",
+	"HOST8",
+	"HOST9",
+	"NETC",
+	"Unknown",
+	"Unknown",
+	"Unknown",
+	"Unknown",
+	"Unknown",
+	"Unknown",
+	"Unknown",
+	"Unknown"
+};
+
+/*
+ * beiscsi_ue_detec()- Detect Unrecoverable Error on adapter
+ * @phba: Driver priv structure
+ *
+ * Read registers linked to UE and check for the UE status
+ **/
+void beiscsi_ue_detect(struct beiscsi_hba *phba)
+{
+	uint32_t ue_hi = 0, ue_lo = 0;
+	uint32_t ue_mask_hi = 0, ue_mask_lo = 0;
+	uint8_t i = 0;
+
+	if (phba->ue_detected)
+		return;
+
+	pci_read_config_dword(phba->pcidev,
+			      PCICFG_UE_STATUS_LOW, &ue_lo);
+	pci_read_config_dword(phba->pcidev,
+			      PCICFG_UE_STATUS_MASK_LOW,
+			      &ue_mask_lo);
+	pci_read_config_dword(phba->pcidev,
+			      PCICFG_UE_STATUS_HIGH,
+			      &ue_hi);
+	pci_read_config_dword(phba->pcidev,
+			      PCICFG_UE_STATUS_MASK_HI,
+			      &ue_mask_hi);
+
+	ue_lo = (ue_lo & ~ue_mask_lo);
+	ue_hi = (ue_hi & ~ue_mask_hi);
+
+
+	if (ue_lo || ue_hi) {
+		phba->ue_detected = true;
+		beiscsi_log(phba, KERN_ERR,
+			    BEISCSI_LOG_CONFIG | BEISCSI_LOG_MBOX,
+			    "BG_%d : Error detected on the adapter\n");
+	}
+
+	if (ue_lo) {
+		for (i = 0; ue_lo; ue_lo >>= 1, i++) {
+			if (ue_lo & 1)
+				beiscsi_log(phba, KERN_ERR,
+					    BEISCSI_LOG_CONFIG,
+					    "BG_%d : UE_LOW %s bit set\n",
+					    desc_ue_status_low[i]);
+		}
+	}
+
+	if (ue_hi) {
+		for (i = 0; ue_hi; ue_hi >>= 1, i++) {
+			if (ue_hi & 1)
+				beiscsi_log(phba, KERN_ERR,
+					    BEISCSI_LOG_CONFIG,
+					    "BG_%d : UE_HIGH %s bit set\n",
+					    desc_ue_status_hi[i]);
+		}
+	}
+}
 
 /**
  * mgmt_reopen_session()- Reopen a session based on reopen_type
@@ -146,6 +278,18 @@ unsigned int mgmt_get_session_info(struct beiscsi_hba *phba,
 	return tag;
 }
 
+/**
+ * mgmt_get_fw_config()- Get the FW config for the function
+ * @ctrl: ptr to Ctrl Info
+ * @phba: ptr to the dev priv structure
+ *
+ * Get the FW config and resources available for the function.
+ * The resources are created based on the count received here.
+ *
+ * return
+ *	Success: 0
+ *	Failure: Non-Zero Value
+ **/
 int mgmt_get_fw_config(struct be_ctrl_info *ctrl,
 				struct beiscsi_hba *phba)
 {
@@ -159,31 +303,79 @@ int mgmt_get_fw_config(struct be_ctrl_info *ctrl,
 	be_wrb_hdr_prepare(wrb, sizeof(*req), true, 0);
 
 	be_cmd_hdr_prepare(&req->hdr, CMD_SUBSYSTEM_COMMON,
-			   OPCODE_COMMON_QUERY_FIRMWARE_CONFIG, sizeof(*req));
+			   OPCODE_COMMON_QUERY_FIRMWARE_CONFIG,
+			   EMBED_MBX_MAX_PAYLOAD_SIZE);
 	status = be_mbox_notify(ctrl);
 	if (!status) {
+		uint8_t ulp_num = 0;
 		struct be_fw_cfg *pfw_cfg;
 		pfw_cfg = req;
-		phba->fw_config.phys_port = pfw_cfg->phys_port;
-		phba->fw_config.iscsi_icd_start =
-					pfw_cfg->ulp[0].icd_base;
-		phba->fw_config.iscsi_icd_count =
-					pfw_cfg->ulp[0].icd_count;
-		phba->fw_config.iscsi_cid_start =
-					pfw_cfg->ulp[0].sq_base;
-		phba->fw_config.iscsi_cid_count =
-					pfw_cfg->ulp[0].sq_count;
-		if (phba->fw_config.iscsi_cid_count > (BE2_MAX_SESSIONS / 2)) {
-			beiscsi_log(phba, KERN_INFO, BEISCSI_LOG_INIT,
-				    "BG_%d : FW reported MAX CXNS as %d\t"
-				    "Max Supported = %d.\n",
-				    phba->fw_config.iscsi_cid_count,
-				    BE2_MAX_SESSIONS);
-			phba->fw_config.iscsi_cid_count = BE2_MAX_SESSIONS / 2;
+
+		if (!is_chip_be2_be3r(phba)) {
+			phba->fw_config.eqid_count = pfw_cfg->eqid_count;
+			phba->fw_config.cqid_count = pfw_cfg->cqid_count;
+
+			beiscsi_log(phba, KERN_INFO,
+				    BEISCSI_LOG_INIT,
+				    "BG_%d : EQ_Count : %d CQ_Count : %d\n",
+				    phba->fw_config.eqid_count,
+				    phba->fw_config.cqid_count);
 		}
+
+		for (ulp_num = 0; ulp_num < BEISCSI_ULP_COUNT; ulp_num++)
+			if (pfw_cfg->ulp[ulp_num].ulp_mode &
+			    BEISCSI_ULP_ISCSI_INI_MODE)
+				set_bit(ulp_num,
+				&phba->fw_config.ulp_supported);
+
+		phba->fw_config.phys_port = pfw_cfg->phys_port;
+		for (ulp_num = 0; ulp_num < BEISCSI_ULP_COUNT; ulp_num++) {
+			if (test_bit(ulp_num, &phba->fw_config.ulp_supported)) {
+
+				phba->fw_config.iscsi_cid_start[ulp_num] =
+					pfw_cfg->ulp[ulp_num].sq_base;
+				phba->fw_config.iscsi_cid_count[ulp_num] =
+					pfw_cfg->ulp[ulp_num].sq_count;
+
+				phba->fw_config.iscsi_icd_start[ulp_num] =
+					pfw_cfg->ulp[ulp_num].icd_base;
+				phba->fw_config.iscsi_icd_count[ulp_num] =
+					pfw_cfg->ulp[ulp_num].icd_count;
+
+				phba->fw_config.iscsi_chain_start[ulp_num] =
+					pfw_cfg->chain_icd[ulp_num].chain_base;
+				phba->fw_config.iscsi_chain_count[ulp_num] =
+					pfw_cfg->chain_icd[ulp_num].chain_count;
+
+				beiscsi_log(phba, KERN_INFO, BEISCSI_LOG_INIT,
+					    "BG_%d : Function loaded on ULP : %d\n"
+					    "\tiscsi_cid_count : %d\n"
+					    "\tiscsi_cid_start : %d\n"
+					    "\t iscsi_icd_count : %d\n"
+					    "\t iscsi_icd_start : %d\n",
+					    ulp_num,
+					    phba->fw_config.
+					    iscsi_cid_count[ulp_num],
+					    phba->fw_config.
+					    iscsi_cid_start[ulp_num],
+					    phba->fw_config.
+					    iscsi_icd_count[ulp_num],
+					    phba->fw_config.
+					    iscsi_icd_start[ulp_num]);
+			}
+		}
+
+		phba->fw_config.dual_ulp_aware = (pfw_cfg->function_mode &
+						  BEISCSI_FUNC_DUA_MODE);
+
+		beiscsi_log(phba, KERN_INFO, BEISCSI_LOG_INIT,
+			    "BG_%d : DUA Mode : 0x%x\n",
+			    phba->fw_config.dual_ulp_aware);
+
 	} else {
-		beiscsi_log(phba, KERN_WARNING, BEISCSI_LOG_INIT,
+		beiscsi_log(phba, KERN_ERR, BEISCSI_LOG_INIT,
 			    "BG_%d : Failed in mgmt_get_fw_config\n");
+		status = -EINVAL;
 	}
 
 	spin_unlock(&ctrl->mbox_lock);
@@ -236,6 +428,8 @@ int mgmt_check_supported_fw(struct be_ctrl_info *ctrl,
 		beiscsi_log(phba, KERN_INFO, BEISCSI_LOG_INIT,
 			    "BM_%d : phba->fw_config.iscsi_features = %d\n",
 			    phba->fw_config.iscsi_features);
+		memcpy(phba->fw_ver_str, resp->params.hba_attribs.
+		       firmware_version_string, BEISCSI_VER_STRLEN);
 	} else
 		beiscsi_log(phba, KERN_ERR, BEISCSI_LOG_INIT,
 			    "BG_%d :  Failed in mgmt_check_supported_fw\n");
@@ -314,7 +508,16 @@ unsigned int mgmt_vendor_specific_fw_cmd(struct be_ctrl_info *ctrl,
 	return tag;
 }
 
-int mgmt_epfw_cleanup(struct beiscsi_hba *phba, unsigned short chute)
+/**
+ * mgmt_epfw_cleanup()- Inform FW to cleanup data structures.
+ * @phba: pointer to dev priv structure
+ * @ulp_num: ULP number.
+ *
+ * return
+ *	Success: 0
+ *	Failure: Non-Zero Value
+ **/
+int mgmt_epfw_cleanup(struct beiscsi_hba *phba, unsigned short ulp_num)
 {
 	struct be_ctrl_info *ctrl = &phba->ctrl;
 	struct be_mcc_wrb *wrb = wrb_from_mccq(phba);
@@ -328,9 +531,9 @@ int mgmt_epfw_cleanup(struct beiscsi_hba *phba, unsigned short chute)
 	be_cmd_hdr_prepare(&req->hdr, CMD_SUBSYSTEM_ISCSI,
 			   OPCODE_COMMON_ISCSI_CLEANUP, sizeof(*req));
 
-	req->chute = chute;
-	req->hdr_ring_id = cpu_to_le16(HWI_GET_DEF_HDRQ_ID(phba));
-	req->data_ring_id = cpu_to_le16(HWI_GET_DEF_BUFQ_ID(phba));
+	req->chute = (1 << ulp_num);
+	req->hdr_ring_id = cpu_to_le16(HWI_GET_DEF_HDRQ_ID(phba, ulp_num));
+	req->data_ring_id = cpu_to_le16(HWI_GET_DEF_BUFQ_ID(phba, ulp_num));
 
 	status =  be_mcc_notify_wait(phba);
 	if (status)
@@ -451,6 +654,16 @@ unsigned int mgmt_upload_connection(struct beiscsi_hba *phba,
 	return tag;
 }
 
+/**
+ * mgmt_open_connection()- Establish a TCP CXN
+ * @dst_addr: Destination Address
+ * @beiscsi_ep: ptr to device endpoint struct
+ * @nonemb_cmd: ptr to memory allocated for command
+ *
+ * return
+ *	Success: Tag number of the MBX Command issued
+ *	Failure: Error code
+ **/
 int mgmt_open_connection(struct beiscsi_hba *phba,
 			 struct sockaddr *dst_addr,
 			 struct beiscsi_endpoint *beiscsi_ep,
@@ -468,14 +681,17 @@ int mgmt_open_connection(struct beiscsi_hba *phba,
 	struct phys_addr template_address = { 0, 0 };
 	struct phys_addr *ptemplate_address;
 	unsigned int tag = 0;
-	unsigned int i;
+	unsigned int i, ulp_num;
 	unsigned short cid = beiscsi_ep->ep_cid;
 	struct be_sge *sge;
 
 	phwi_ctrlr = phba->phwi_ctrlr;
 	phwi_context = phwi_ctrlr->phwi_ctxt;
-	def_hdr_id = (unsigned short)HWI_GET_DEF_HDRQ_ID(phba);
-	def_data_id = (unsigned short)HWI_GET_DEF_BUFQ_ID(phba);
+
+	ulp_num = phwi_ctrlr->wrb_context[BE_GET_CRI_FROM_CID(cid)].ulp_num;
+
+	def_hdr_id = (unsigned short)HWI_GET_DEF_HDRQ_ID(phba, ulp_num);
+	def_data_id = (unsigned short)HWI_GET_DEF_BUFQ_ID(phba, ulp_num);
 
 	ptemplate_address = &template_address;
 	ISCSI_GET_PDU_TEMPLATE_ADDRESS(phba, ptemplate_address);
@@ -575,13 +791,20 @@ unsigned int mgmt_get_all_if_id(struct beiscsi_hba *phba)
 	return status;
 }
 
+/*
+ * mgmt_exec_nonemb_cmd()- Execute Non Embedded MBX Cmd
+ * @phba: Driver priv structure
+ * @nonemb_cmd: Address of the MBX command issued
+ * @resp_buf: Buffer to copy the MBX cmd response
+ * @resp_buf_len: respone lenght to be copied
+ *
+ **/
 static int mgmt_exec_nonemb_cmd(struct beiscsi_hba *phba,
 				struct be_dma_mem *nonemb_cmd, void *resp_buf,
 				int resp_buf_len)
 {
 	struct be_ctrl_info *ctrl = &phba->ctrl;
 	struct be_mcc_wrb *wrb = wrb_from_mccq(phba);
-	unsigned short status, extd_status;
 	struct be_sge *sge;
 	unsigned int tag;
 	int rc = 0;
@@ -599,31 +822,28 @@ static int mgmt_exec_nonemb_cmd(struct beiscsi_hba *phba,
 
 	be_wrb_hdr_prepare(wrb, nonemb_cmd->size, false, 1);
 	sge->pa_hi = cpu_to_le32(upper_32_bits(nonemb_cmd->dma));
-	sge->pa_lo = cpu_to_le32(nonemb_cmd->dma & 0xFFFFFFFF);
+	sge->pa_lo = cpu_to_le32(lower_32_bits(nonemb_cmd->dma));
 	sge->len = cpu_to_le32(nonemb_cmd->size);
 
 	be_mcc_notify(phba);
 	spin_unlock(&ctrl->mbox_lock);
 
-	wait_event_interruptible(phba->ctrl.mcc_wait[tag],
-				 phba->ctrl.mcc_numtag[tag]);
+	rc = beiscsi_mccq_compl(phba, tag, NULL, nonemb_cmd->va);
+	if (rc) {
+		/* Check if the IOCTL needs to be re-issued */
+		if (rc == -EAGAIN)
+			return rc;
 
-	extd_status = (phba->ctrl.mcc_numtag[tag] & 0x0000FF00) >> 8;
-	status = phba->ctrl.mcc_numtag[tag] & 0x000000FF;
-	if (status || extd_status) {
 		beiscsi_log(phba, KERN_ERR,
 			    BEISCSI_LOG_CONFIG | BEISCSI_LOG_MBOX,
-			    "BG_%d : mgmt_exec_nonemb_cmd Failed status = %d"
-			    "extd_status = %d\n", status, extd_status);
-		rc = -EIO;
-		goto free_tag;
+			    "BG_%d : mgmt_exec_nonemb_cmd Failed status\n");
+
+		goto free_cmd;
 	}
 
 	if (resp_buf)
 		memcpy(resp_buf, nonemb_cmd->va, resp_buf_len);
 
-free_tag:
-	free_mcc_tag(&phba->ctrl, tag);
 free_cmd:
 	pci_free_consistent(ctrl->pdev, nonemb_cmd->size,
 			    nonemb_cmd->va, nonemb_cmd->dma);
@@ -726,7 +946,7 @@ int mgmt_set_ip(struct beiscsi_hba *phba,
 		uint32_t boot_proto)
 {
 	struct be_cmd_get_def_gateway_resp gtway_addr_set;
-	struct be_cmd_get_if_info_resp if_info;
+	struct be_cmd_get_if_info_resp *if_info;
 	struct be_cmd_set_dhcp_req *dhcpreq;
 	struct be_cmd_rel_dhcp_req *reldhcp;
 	struct be_dma_mem nonemb_cmd;
@@ -737,16 +957,17 @@ int mgmt_set_ip(struct beiscsi_hba *phba,
 	if (mgmt_get_all_if_id(phba))
 		return -EIO;
 
-	memset(&if_info, 0, sizeof(if_info));
 	ip_type = (ip_param->param == ISCSI_NET_PARAM_IPV6_ADDR) ?
 		BE2_IPV6 : BE2_IPV4 ;
 
 	rc = mgmt_get_if_info(phba, ip_type, &if_info);
-	if (rc)
+	if (rc) {
+		kfree(if_info);
 		return rc;
+	}
 
 	if (boot_proto == ISCSI_BOOTPROTO_DHCP) {
-		if (if_info.dhcp_state) {
+		if (if_info->dhcp_state) {
 			beiscsi_log(phba, KERN_WARNING, BEISCSI_LOG_CONFIG,
 				    "BG_%d : DHCP Already Enabled\n");
 			return 0;
@@ -759,9 +980,9 @@ int mgmt_set_ip(struct beiscsi_hba *phba,
 				IP_V6_LEN : IP_V4_LEN;
 
 	} else {
-		if (if_info.dhcp_state) {
+		if (if_info->dhcp_state) {
 
-			memset(&if_info, 0, sizeof(if_info));
+			memset(if_info, 0, sizeof(*if_info));
 			rc = mgmt_alloc_cmd_data(phba, &nonemb_cmd,
 				OPCODE_COMMON_ISCSI_NTWK_REL_STATELESS_IP_ADDR,
 				sizeof(*reldhcp));
@@ -784,8 +1005,8 @@ int mgmt_set_ip(struct beiscsi_hba *phba,
 	}
 
 	/* Delete the Static IP Set */
-	if (if_info.ip_addr.addr[0]) {
-		rc = mgmt_static_ip_modify(phba, &if_info, ip_param, NULL,
+	if (if_info->ip_addr.addr[0]) {
+		rc = mgmt_static_ip_modify(phba, if_info, ip_param, NULL,
 					   IP_ACTION_DEL);
 		if (rc)
 			return rc;
@@ -831,7 +1052,7 @@ int mgmt_set_ip(struct beiscsi_hba *phba,
 
 		return mgmt_exec_nonemb_cmd(phba, &nonemb_cmd, NULL, 0);
 	} else {
-		return mgmt_static_ip_modify(phba, &if_info, ip_param,
+		return mgmt_static_ip_modify(phba, if_info, ip_param,
 					     subnet_param, IP_ACTION_ADD);
 	}
 
@@ -896,27 +1117,64 @@ int mgmt_get_gateway(struct beiscsi_hba *phba, int ip_type,
 }
 
 int mgmt_get_if_info(struct beiscsi_hba *phba, int ip_type,
-		     struct be_cmd_get_if_info_resp *if_info)
+		     struct be_cmd_get_if_info_resp **if_info)
 {
 	struct be_cmd_get_if_info_req *req;
 	struct be_dma_mem nonemb_cmd;
+	uint32_t ioctl_size = sizeof(struct be_cmd_get_if_info_resp);
 	int rc;
 
 	if (mgmt_get_all_if_id(phba))
 		return -EIO;
 
-	rc = mgmt_alloc_cmd_data(phba, &nonemb_cmd,
-				 OPCODE_COMMON_ISCSI_NTWK_GET_IF_INFO,
-				 sizeof(*if_info));
-	if (rc)
-		return rc;
+	do {
+		rc = mgmt_alloc_cmd_data(phba, &nonemb_cmd,
+					 OPCODE_COMMON_ISCSI_NTWK_GET_IF_INFO,
+					 ioctl_size);
+		if (rc)
+			return rc;
 
-	req = nonemb_cmd.va;
-	req->interface_hndl = phba->interface_handle;
-	req->ip_type = ip_type;
+		req = nonemb_cmd.va;
+		req->interface_hndl = phba->interface_handle;
+		req->ip_type = ip_type;
 
-	return mgmt_exec_nonemb_cmd(phba, &nonemb_cmd, if_info,
-				    sizeof(*if_info));
+		/* Allocate memory for if_info */
+		*if_info = kzalloc(ioctl_size, GFP_KERNEL);
+		if (!*if_info) {
+			beiscsi_log(phba, KERN_ERR,
+				    BEISCSI_LOG_INIT | BEISCSI_LOG_CONFIG,
+				    "BG_%d : Memory Allocation Failure\n");
+
+				/* Free the DMA memory for the IOCTL issuing */
+				pci_free_consistent(phba->ctrl.pdev,
+						    nonemb_cmd.size,
+						    nonemb_cmd.va,
+						    nonemb_cmd.dma);
+				return -ENOMEM;
+		}
+
+		rc =  mgmt_exec_nonemb_cmd(phba, &nonemb_cmd, *if_info,
+					   ioctl_size);
+
+		/* Check if the error is because of Insufficent_Buffer */
+		if (rc == -EAGAIN) {
+
+			/* Get the new memory size */
+			ioctl_size = ((struct be_cmd_resp_hdr *)
+				      nonemb_cmd.va)->actual_resp_len;
+			ioctl_size += sizeof(struct be_cmd_req_hdr);
+
+			/* Free the previous allocated DMA memory */
+			pci_free_consistent(phba->ctrl.pdev, nonemb_cmd.size,
+					    nonemb_cmd.va,
+					    nonemb_cmd.dma);
+
+			/* Free the virtual memory */
+			kfree(*if_info);
+		} else
+			break;
+	} while (true);
+	return rc;
 }
 
 int mgmt_get_nic_conf(struct beiscsi_hba *phba,
@@ -1009,10 +1267,9 @@ int be_mgmt_get_boot_shandle(struct beiscsi_hba *phba,
 {
 	struct be_cmd_get_boot_target_resp *boot_resp;
 	struct be_mcc_wrb *wrb;
-	unsigned int tag, wrb_num;
+	unsigned int tag;
 	uint8_t boot_retry = 3;
-	unsigned short status, extd_status;
-	struct be_queue_info *mccq = &phba->ctrl.mcc_obj.q;
+	int rc;
 
 	do {
 		/* Get the Boot Target Session Handle and Count*/
@@ -1022,24 +1279,16 @@ int be_mgmt_get_boot_shandle(struct beiscsi_hba *phba,
 				    BEISCSI_LOG_CONFIG | BEISCSI_LOG_INIT,
 				    "BG_%d : Getting Boot Target Info Failed\n");
 			return -EAGAIN;
-		} else
-			wait_event_interruptible(phba->ctrl.mcc_wait[tag],
-						 phba->ctrl.mcc_numtag[tag]);
+		}
 
-		wrb_num = (phba->ctrl.mcc_numtag[tag] & 0x00FF0000) >> 16;
-		extd_status = (phba->ctrl.mcc_numtag[tag] & 0x0000FF00) >> 8;
-		status = phba->ctrl.mcc_numtag[tag] & 0x000000FF;
-		if (status || extd_status) {
+		rc = beiscsi_mccq_compl(phba, tag, &wrb, NULL);
+		if (rc) {
 			beiscsi_log(phba, KERN_ERR,
 				    BEISCSI_LOG_INIT | BEISCSI_LOG_CONFIG,
-				    "BG_%d : mgmt_get_boot_target Failed"
-				    " status = %d extd_status = %d\n",
-				    status, extd_status);
-			free_mcc_tag(&phba->ctrl, tag);
+				    "BG_%d : MBX CMD get_boot_target Failed\n");
 			return -EBUSY;
 		}
-		wrb = queue_get_wrb(mccq, wrb_num);
-		free_mcc_tag(&phba->ctrl, tag);
+
 		boot_resp = embedded_payload(wrb);
 
 		/* Check if the there are any Boot targets configured */
@@ -1064,24 +1313,15 @@ int be_mgmt_get_boot_shandle(struct beiscsi_hba *phba,
 				    BEISCSI_LOG_INIT | BEISCSI_LOG_CONFIG,
 				    "BG_%d : mgmt_reopen_session Failed\n");
 			return -EAGAIN;
-		} else
-			wait_event_interruptible(phba->ctrl.mcc_wait[tag],
-						 phba->ctrl.mcc_numtag[tag]);
+		}
 
-		wrb_num = (phba->ctrl.mcc_numtag[tag] & 0x00FF0000) >> 16;
-		extd_status = (phba->ctrl.mcc_numtag[tag] & 0x0000FF00) >> 8;
-		status = phba->ctrl.mcc_numtag[tag] & 0x000000FF;
-		if (status || extd_status) {
+		rc = beiscsi_mccq_compl(phba, tag, NULL, NULL);
+		if (rc) {
 			beiscsi_log(phba, KERN_ERR,
 				    BEISCSI_LOG_INIT | BEISCSI_LOG_CONFIG,
-				    "BG_%d : mgmt_reopen_session Failed"
-				    " status = %d extd_status = %d\n",
-				    status, extd_status);
-			free_mcc_tag(&phba->ctrl, tag);
-			return -EBUSY;
+				    "BG_%d : mgmt_reopen_session Failed");
+			return rc;
 		}
-		free_mcc_tag(&phba->ctrl, tag);
-
 	} while (--boot_retry);
 
 	/* Couldn't log into the boot target */
@@ -1106,8 +1346,9 @@ int be_mgmt_get_boot_shandle(struct beiscsi_hba *phba,
 int mgmt_set_vlan(struct beiscsi_hba *phba,
 		   uint16_t vlan_tag)
 {
-	unsigned int tag, wrb_num;
-	unsigned short status, extd_status;
+	int rc;
+	unsigned int tag;
+	struct be_mcc_wrb *wrb = NULL;
 
 	tag = be_cmd_set_vlan(phba, vlan_tag);
 	if (!tag) {
@@ -1115,24 +1356,306 @@ int mgmt_set_vlan(struct beiscsi_hba *phba,
 			    (BEISCSI_LOG_CONFIG | BEISCSI_LOG_MBOX),
 			    "BG_%d : VLAN Setting Failed\n");
 		return -EBUSY;
-	} else
-		wait_event_interruptible(phba->ctrl.mcc_wait[tag],
-					 phba->ctrl.mcc_numtag[tag]);
-
-	wrb_num = (phba->ctrl.mcc_numtag[tag] & 0x00FF0000) >> 16;
-	extd_status = (phba->ctrl.mcc_numtag[tag] & 0x0000FF00) >> 8;
-	status = phba->ctrl.mcc_numtag[tag] & 0x000000FF;
-
-	if (status || extd_status) {
-		beiscsi_log(phba, KERN_ERR,
-			    (BEISCSI_LOG_CONFIG | BEISCSI_LOG_MBOX),
-			    "BS_%d : status : %d extd_status : %d\n",
-			    status, extd_status);
-
-		free_mcc_tag(&phba->ctrl, tag);
-		return -EAGAIN;
 	}
 
-	free_mcc_tag(&phba->ctrl, tag);
-	return 0;
+	rc = beiscsi_mccq_compl(phba, tag, &wrb, NULL);
+	if (rc) {
+		beiscsi_log(phba, KERN_ERR,
+			    (BEISCSI_LOG_CONFIG | BEISCSI_LOG_MBOX),
+			    "BS_%d : VLAN MBX Cmd Failed\n");
+		return rc;
+	}
+	return rc;
+}
+
+/**
+ * beiscsi_drvr_ver_disp()- Display the driver Name and Version
+ * @dev: ptr to device not used.
+ * @attr: device attribute, not used.
+ * @buf: contains formatted text driver name and version
+ *
+ * return
+ * size of the formatted string
+ **/
+ssize_t
+beiscsi_drvr_ver_disp(struct device *dev, struct device_attribute *attr,
+		       char *buf)
+{
+	return snprintf(buf, PAGE_SIZE, BE_NAME "\n");
+}
+
+/**
+ * beiscsi_fw_ver_disp()- Display Firmware Version
+ * @dev: ptr to device not used.
+ * @attr: device attribute, not used.
+ * @buf: contains formatted text Firmware version
+ *
+ * return
+ * size of the formatted string
+ **/
+ssize_t
+beiscsi_fw_ver_disp(struct device *dev, struct device_attribute *attr,
+		     char *buf)
+{
+	struct Scsi_Host *shost = class_to_shost(dev);
+	struct beiscsi_hba *phba = iscsi_host_priv(shost);
+
+	return snprintf(buf, PAGE_SIZE, "%s\n", phba->fw_ver_str);
+}
+
+/**
+ * beiscsi_active_session_disp()- Display Sessions Active
+ * @dev: ptr to device not used.
+ * @attr: device attribute, not used.
+ * @buf: contains formatted text Session Count
+ *
+ * return
+ * size of the formatted string
+ **/
+ssize_t
+beiscsi_active_session_disp(struct device *dev, struct device_attribute *attr,
+			 char *buf)
+{
+	struct Scsi_Host *shost = class_to_shost(dev);
+	struct beiscsi_hba *phba = iscsi_host_priv(shost);
+	uint16_t avlbl_cids = 0, ulp_num, len = 0, total_cids = 0;
+
+	for (ulp_num = 0; ulp_num < BEISCSI_ULP_COUNT; ulp_num++) {
+		if (test_bit(ulp_num, (void *)&phba->fw_config.ulp_supported)) {
+			avlbl_cids = BEISCSI_ULP_AVLBL_CID(phba, ulp_num);
+			total_cids = BEISCSI_GET_CID_COUNT(phba, ulp_num);
+			len += snprintf(buf+len, PAGE_SIZE - len,
+					"ULP%d : %d\n", ulp_num,
+					(total_cids - avlbl_cids));
+		} else
+			len += snprintf(buf+len, PAGE_SIZE - len,
+					"ULP%d : %d\n", ulp_num, 0);
+	}
+
+	return len;
+}
+
+/**
+ * beiscsi_free_session_disp()- Display Avaliable Session
+ * @dev: ptr to device not used.
+ * @attr: device attribute, not used.
+ * @buf: contains formatted text Session Count
+ *
+ * return
+ * size of the formatted string
+ **/
+ssize_t
+beiscsi_free_session_disp(struct device *dev, struct device_attribute *attr,
+		       char *buf)
+{
+	struct Scsi_Host *shost = class_to_shost(dev);
+	struct beiscsi_hba *phba = iscsi_host_priv(shost);
+	uint16_t ulp_num, len = 0;
+
+	for (ulp_num = 0; ulp_num < BEISCSI_ULP_COUNT; ulp_num++) {
+		if (test_bit(ulp_num, (void *)&phba->fw_config.ulp_supported))
+			len += snprintf(buf+len, PAGE_SIZE - len,
+					"ULP%d : %d\n", ulp_num,
+					BEISCSI_ULP_AVLBL_CID(phba, ulp_num));
+		else
+			len += snprintf(buf+len, PAGE_SIZE - len,
+					"ULP%d : %d\n", ulp_num, 0);
+	}
+
+	return len;
+}
+
+/**
+ * beiscsi_adap_family_disp()- Display adapter family.
+ * @dev: ptr to device to get priv structure
+ * @attr: device attribute, not used.
+ * @buf: contains formatted text driver name and version
+ *
+ * return
+ * size of the formatted string
+ **/
+ssize_t
+beiscsi_adap_family_disp(struct device *dev, struct device_attribute *attr,
+			  char *buf)
+{
+	uint16_t dev_id = 0;
+	struct Scsi_Host *shost = class_to_shost(dev);
+	struct beiscsi_hba *phba = iscsi_host_priv(shost);
+
+	dev_id = phba->pcidev->device;
+	switch (dev_id) {
+	case BE_DEVICE_ID1:
+	case OC_DEVICE_ID1:
+	case OC_DEVICE_ID2:
+		return snprintf(buf, PAGE_SIZE, "BE2 Adapter Family\n");
+		break;
+	case BE_DEVICE_ID2:
+	case OC_DEVICE_ID3:
+		return snprintf(buf, PAGE_SIZE, "BE3-R Adapter Family\n");
+		break;
+	case OC_SKH_ID1:
+		return snprintf(buf, PAGE_SIZE, "Skyhawk-R Adapter Family\n");
+		break;
+	default:
+		return snprintf(buf, PAGE_SIZE,
+				"Unknown Adapter Family: 0x%x\n", dev_id);
+		break;
+	}
+}
+
+/**
+ * beiscsi_phys_port()- Display Physical Port Identifier
+ * @dev: ptr to device not used.
+ * @attr: device attribute, not used.
+ * @buf: contains formatted text port identifier
+ *
+ * return
+ * size of the formatted string
+ **/
+ssize_t
+beiscsi_phys_port_disp(struct device *dev, struct device_attribute *attr,
+			 char *buf)
+{
+	struct Scsi_Host *shost = class_to_shost(dev);
+	struct beiscsi_hba *phba = iscsi_host_priv(shost);
+
+	return snprintf(buf, PAGE_SIZE, "Port Identifier : %d\n",
+			phba->fw_config.phys_port);
+}
+
+void beiscsi_offload_cxn_v0(struct beiscsi_offload_params *params,
+			     struct wrb_handle *pwrb_handle,
+			     struct be_mem_descriptor *mem_descr)
+{
+	struct iscsi_wrb *pwrb = pwrb_handle->pwrb;
+
+	memset(pwrb, 0, sizeof(*pwrb));
+	AMAP_SET_BITS(struct amap_iscsi_target_context_update_wrb,
+		      max_send_data_segment_length, pwrb,
+		      params->dw[offsetof(struct amap_beiscsi_offload_params,
+		      max_send_data_segment_length) / 32]);
+	AMAP_SET_BITS(struct amap_iscsi_target_context_update_wrb, type, pwrb,
+		      BE_TGT_CTX_UPDT_CMD);
+	AMAP_SET_BITS(struct amap_iscsi_target_context_update_wrb,
+		      first_burst_length,
+		      pwrb,
+		      params->dw[offsetof(struct amap_beiscsi_offload_params,
+		      first_burst_length) / 32]);
+	AMAP_SET_BITS(struct amap_iscsi_target_context_update_wrb, erl, pwrb,
+		      (params->dw[offsetof(struct amap_beiscsi_offload_params,
+		      erl) / 32] & OFFLD_PARAMS_ERL));
+	AMAP_SET_BITS(struct amap_iscsi_target_context_update_wrb, dde, pwrb,
+		      (params->dw[offsetof(struct amap_beiscsi_offload_params,
+		       dde) / 32] & OFFLD_PARAMS_DDE) >> 2);
+	AMAP_SET_BITS(struct amap_iscsi_target_context_update_wrb, hde, pwrb,
+		      (params->dw[offsetof(struct amap_beiscsi_offload_params,
+		      hde) / 32] & OFFLD_PARAMS_HDE) >> 3);
+	AMAP_SET_BITS(struct amap_iscsi_target_context_update_wrb, ir2t, pwrb,
+		      (params->dw[offsetof(struct amap_beiscsi_offload_params,
+		      ir2t) / 32] & OFFLD_PARAMS_IR2T) >> 4);
+	AMAP_SET_BITS(struct amap_iscsi_target_context_update_wrb, imd, pwrb,
+		      (params->dw[offsetof(struct amap_beiscsi_offload_params,
+		      imd) / 32] & OFFLD_PARAMS_IMD) >> 5);
+	AMAP_SET_BITS(struct amap_iscsi_target_context_update_wrb, stat_sn,
+		      pwrb,
+		      (params->dw[offsetof(struct amap_beiscsi_offload_params,
+		      exp_statsn) / 32] + 1));
+	AMAP_SET_BITS(struct amap_iscsi_target_context_update_wrb, wrb_idx,
+		      pwrb, pwrb_handle->wrb_index);
+
+	AMAP_SET_BITS(struct amap_iscsi_target_context_update_wrb,
+		      max_burst_length, pwrb, params->dw[offsetof
+		      (struct amap_beiscsi_offload_params,
+		      max_burst_length) / 32]);
+
+	AMAP_SET_BITS(struct amap_iscsi_target_context_update_wrb, ptr2nextwrb,
+		      pwrb, pwrb_handle->nxt_wrb_index);
+	AMAP_SET_BITS(struct amap_iscsi_target_context_update_wrb,
+		      session_state, pwrb, 0);
+	AMAP_SET_BITS(struct amap_iscsi_target_context_update_wrb, compltonack,
+		      pwrb, 1);
+	AMAP_SET_BITS(struct amap_iscsi_target_context_update_wrb, notpredblq,
+		      pwrb, 0);
+	AMAP_SET_BITS(struct amap_iscsi_target_context_update_wrb, mode, pwrb,
+		      0);
+
+	mem_descr += ISCSI_MEM_GLOBAL_HEADER;
+	AMAP_SET_BITS(struct amap_iscsi_target_context_update_wrb,
+		      pad_buffer_addr_hi, pwrb,
+		      mem_descr->mem_array[0].bus_address.u.a32.address_hi);
+	AMAP_SET_BITS(struct amap_iscsi_target_context_update_wrb,
+		      pad_buffer_addr_lo, pwrb,
+		      mem_descr->mem_array[0].bus_address.u.a32.address_lo);
+}
+
+void beiscsi_offload_cxn_v2(struct beiscsi_offload_params *params,
+			     struct wrb_handle *pwrb_handle)
+{
+	struct iscsi_wrb *pwrb = pwrb_handle->pwrb;
+
+	memset(pwrb, 0, sizeof(*pwrb));
+
+	AMAP_SET_BITS(struct amap_iscsi_target_context_update_wrb_v2,
+		      max_burst_length, pwrb, params->dw[offsetof
+		      (struct amap_beiscsi_offload_params,
+		      max_burst_length) / 32]);
+	AMAP_SET_BITS(struct amap_iscsi_target_context_update_wrb_v2,
+		      type, pwrb,
+		      BE_TGT_CTX_UPDT_CMD);
+	AMAP_SET_BITS(struct amap_iscsi_target_context_update_wrb_v2,
+		      ptr2nextwrb,
+		      pwrb, pwrb_handle->nxt_wrb_index);
+	AMAP_SET_BITS(struct amap_iscsi_target_context_update_wrb_v2, wrb_idx,
+		      pwrb, pwrb_handle->wrb_index);
+	AMAP_SET_BITS(struct amap_iscsi_target_context_update_wrb_v2,
+		      max_send_data_segment_length, pwrb,
+		      params->dw[offsetof(struct amap_beiscsi_offload_params,
+		      max_send_data_segment_length) / 32]);
+	AMAP_SET_BITS(struct amap_iscsi_target_context_update_wrb_v2,
+		      first_burst_length, pwrb,
+		      params->dw[offsetof(struct amap_beiscsi_offload_params,
+		      first_burst_length) / 32]);
+	AMAP_SET_BITS(struct amap_iscsi_target_context_update_wrb_v2,
+		      max_recv_dataseg_len, pwrb,
+		      params->dw[offsetof(struct amap_beiscsi_offload_params,
+		      max_recv_data_segment_length) / 32]);
+	AMAP_SET_BITS(struct amap_iscsi_target_context_update_wrb_v2,
+		      max_cxns, pwrb, BEISCSI_MAX_CXNS);
+	AMAP_SET_BITS(struct amap_iscsi_target_context_update_wrb_v2, erl, pwrb,
+		      (params->dw[offsetof(struct amap_beiscsi_offload_params,
+		      erl) / 32] & OFFLD_PARAMS_ERL));
+	AMAP_SET_BITS(struct amap_iscsi_target_context_update_wrb_v2, dde, pwrb,
+		      (params->dw[offsetof(struct amap_beiscsi_offload_params,
+		      dde) / 32] & OFFLD_PARAMS_DDE) >> 2);
+	AMAP_SET_BITS(struct amap_iscsi_target_context_update_wrb_v2, hde, pwrb,
+		      (params->dw[offsetof(struct amap_beiscsi_offload_params,
+		      hde) / 32] & OFFLD_PARAMS_HDE) >> 3);
+	AMAP_SET_BITS(struct amap_iscsi_target_context_update_wrb_v2,
+		      ir2t, pwrb,
+		      (params->dw[offsetof(struct amap_beiscsi_offload_params,
+		      ir2t) / 32] & OFFLD_PARAMS_IR2T) >> 4);
+	AMAP_SET_BITS(struct amap_iscsi_target_context_update_wrb_v2, imd, pwrb,
+		      (params->dw[offsetof(struct amap_beiscsi_offload_params,
+		      imd) / 32] & OFFLD_PARAMS_IMD) >> 5);
+	AMAP_SET_BITS(struct amap_iscsi_target_context_update_wrb_v2,
+		      data_seq_inorder,
+		      pwrb,
+		      (params->dw[offsetof(struct amap_beiscsi_offload_params,
+		      data_seq_inorder) / 32] &
+		      OFFLD_PARAMS_DATA_SEQ_INORDER) >> 6);
+	AMAP_SET_BITS(struct amap_iscsi_target_context_update_wrb_v2,
+		      pdu_seq_inorder,
+		      pwrb,
+		      (params->dw[offsetof(struct amap_beiscsi_offload_params,
+		      pdu_seq_inorder) / 32] &
+		      OFFLD_PARAMS_PDU_SEQ_INORDER) >> 7);
+	AMAP_SET_BITS(struct amap_iscsi_target_context_update_wrb_v2, max_r2t,
+		      pwrb,
+		      (params->dw[offsetof(struct amap_beiscsi_offload_params,
+		      max_r2t) / 32] &
+		      OFFLD_PARAMS_MAX_R2T) >> 8);
+	AMAP_SET_BITS(struct amap_iscsi_target_context_update_wrb_v2, stat_sn,
+		      pwrb,
+		     (params->dw[offsetof(struct amap_beiscsi_offload_params,
+		      exp_statsn) / 32] + 1));
 }

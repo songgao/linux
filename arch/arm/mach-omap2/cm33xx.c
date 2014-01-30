@@ -22,8 +22,7 @@
 #include <linux/err.h>
 #include <linux/io.h>
 
-#include <plat/common.h>
-
+#include "clockdomain.h"
 #include "cm.h"
 #include "cm33xx.h"
 #include "cm-regbits-34xx.h"
@@ -49,13 +48,13 @@
 /* Private functions */
 
 /* Read a register in a CM instance */
-static inline u32 am33xx_cm_read_reg(s16 inst, u16 idx)
+static inline u32 am33xx_cm_read_reg(u16 inst, u16 idx)
 {
 	return __raw_readl(cm_base + inst + idx);
 }
 
 /* Write into a register in a CM */
-static inline void am33xx_cm_write_reg(u32 val, s16 inst, u16 idx)
+static inline void am33xx_cm_write_reg(u32 val, u16 inst, u16 idx)
 {
 	__raw_writel(val, cm_base + inst + idx);
 }
@@ -139,7 +138,7 @@ static bool _is_module_ready(u16 inst, s16 cdoffs, u16 clkctrl_offs)
  * @c must be the unshifted value for CLKTRCTRL - i.e., this function
  * will handle the shift itself.
  */
-static void _clktrctrl_write(u8 c, s16 inst, u16 cdoffs)
+static void _clktrctrl_write(u8 c, u16 inst, u16 cdoffs)
 {
 	u32 v;
 
@@ -159,7 +158,7 @@ static void _clktrctrl_write(u8 c, s16 inst, u16 cdoffs)
  * Returns true if the clockdomain referred to by (@inst, @cdoffs)
  * is in hardware-supervised idle mode, or 0 otherwise.
  */
-bool am33xx_cm_is_clkdm_in_hwsup(s16 inst, u16 cdoffs)
+bool am33xx_cm_is_clkdm_in_hwsup(u16 inst, u16 cdoffs)
 {
 	u32 v;
 
@@ -178,7 +177,7 @@ bool am33xx_cm_is_clkdm_in_hwsup(s16 inst, u16 cdoffs)
  * Put a clockdomain referred to by (@inst, @cdoffs) into
  * hardware-supervised idle mode.  No return value.
  */
-void am33xx_cm_clkdm_enable_hwsup(s16 inst, u16 cdoffs)
+void am33xx_cm_clkdm_enable_hwsup(u16 inst, u16 cdoffs)
 {
 	_clktrctrl_write(OMAP34XX_CLKSTCTRL_ENABLE_AUTO, inst, cdoffs);
 }
@@ -192,7 +191,7 @@ void am33xx_cm_clkdm_enable_hwsup(s16 inst, u16 cdoffs)
  * software-supervised idle mode, i.e., controlled manually by the
  * Linux OMAP clockdomain code.  No return value.
  */
-void am33xx_cm_clkdm_disable_hwsup(s16 inst, u16 cdoffs)
+void am33xx_cm_clkdm_disable_hwsup(u16 inst, u16 cdoffs)
 {
 	_clktrctrl_write(OMAP34XX_CLKSTCTRL_DISABLE_AUTO, inst, cdoffs);
 }
@@ -205,7 +204,7 @@ void am33xx_cm_clkdm_disable_hwsup(s16 inst, u16 cdoffs)
  * Put a clockdomain referred to by (@inst, @cdoffs) into idle
  * No return value.
  */
-void am33xx_cm_clkdm_force_sleep(s16 inst, u16 cdoffs)
+void am33xx_cm_clkdm_force_sleep(u16 inst, u16 cdoffs)
 {
 	_clktrctrl_write(OMAP34XX_CLKSTCTRL_FORCE_SLEEP, inst, cdoffs);
 }
@@ -218,7 +217,7 @@ void am33xx_cm_clkdm_force_sleep(s16 inst, u16 cdoffs)
  * Take a clockdomain referred to by (@inst, @cdoffs) out of idle,
  * waking it up.  No return value.
  */
-void am33xx_cm_clkdm_force_wakeup(s16 inst, u16 cdoffs)
+void am33xx_cm_clkdm_force_wakeup(u16 inst, u16 cdoffs)
 {
 	_clktrctrl_write(OMAP34XX_CLKSTCTRL_FORCE_WAKEUP, inst, cdoffs);
 }
@@ -241,9 +240,6 @@ void am33xx_cm_clkdm_force_wakeup(s16 inst, u16 cdoffs)
 int am33xx_cm_wait_module_ready(u16 inst, s16 cdoffs, u16 clkctrl_offs)
 {
 	int i = 0;
-
-	if (!clkctrl_offs)
-		return 0;
 
 	omap_test_timeout(_is_module_ready(inst, cdoffs, clkctrl_offs),
 			  MAX_MODULE_READY_TIME, i);
@@ -311,3 +307,58 @@ void am33xx_cm_module_disable(u16 inst, s16 cdoffs, u16 clkctrl_offs)
 	v &= ~AM33XX_MODULEMODE_MASK;
 	am33xx_cm_write_reg(v, inst, clkctrl_offs);
 }
+
+/*
+ * Clockdomain low-level functions
+ */
+
+static int am33xx_clkdm_sleep(struct clockdomain *clkdm)
+{
+	am33xx_cm_clkdm_force_sleep(clkdm->cm_inst, clkdm->clkdm_offs);
+	return 0;
+}
+
+static int am33xx_clkdm_wakeup(struct clockdomain *clkdm)
+{
+	am33xx_cm_clkdm_force_wakeup(clkdm->cm_inst, clkdm->clkdm_offs);
+	return 0;
+}
+
+static void am33xx_clkdm_allow_idle(struct clockdomain *clkdm)
+{
+	am33xx_cm_clkdm_enable_hwsup(clkdm->cm_inst, clkdm->clkdm_offs);
+}
+
+static void am33xx_clkdm_deny_idle(struct clockdomain *clkdm)
+{
+	am33xx_cm_clkdm_disable_hwsup(clkdm->cm_inst, clkdm->clkdm_offs);
+}
+
+static int am33xx_clkdm_clk_enable(struct clockdomain *clkdm)
+{
+	if (clkdm->flags & CLKDM_CAN_FORCE_WAKEUP)
+		return am33xx_clkdm_wakeup(clkdm);
+
+	return 0;
+}
+
+static int am33xx_clkdm_clk_disable(struct clockdomain *clkdm)
+{
+	bool hwsup = false;
+
+	hwsup = am33xx_cm_is_clkdm_in_hwsup(clkdm->cm_inst, clkdm->clkdm_offs);
+
+	if (!hwsup && (clkdm->flags & CLKDM_CAN_FORCE_SLEEP))
+		am33xx_clkdm_sleep(clkdm);
+
+	return 0;
+}
+
+struct clkdm_ops am33xx_clkdm_operations = {
+	.clkdm_sleep		= am33xx_clkdm_sleep,
+	.clkdm_wakeup		= am33xx_clkdm_wakeup,
+	.clkdm_allow_idle	= am33xx_clkdm_allow_idle,
+	.clkdm_deny_idle	= am33xx_clkdm_deny_idle,
+	.clkdm_clk_enable	= am33xx_clkdm_clk_enable,
+	.clkdm_clk_disable	= am33xx_clkdm_clk_disable,
+};

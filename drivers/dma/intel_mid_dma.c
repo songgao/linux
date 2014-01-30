@@ -309,7 +309,7 @@ static void midc_descriptor_complete(struct intel_mid_dma_chan *midc,
 		callback_txd(param_txd);
 	}
 	if (midc->raw_tfr) {
-		desc->status = DMA_SUCCESS;
+		desc->status = DMA_COMPLETE;
 		if (desc->lli != NULL) {
 			pci_pool_free(desc->lli_pool, desc->lli,
 						desc->lli_phys);
@@ -481,7 +481,7 @@ static enum dma_status intel_mid_dma_tx_status(struct dma_chan *chan,
 	enum dma_status ret;
 
 	ret = dma_cookie_status(chan, cookie, txstate);
-	if (ret != DMA_SUCCESS) {
+	if (ret != DMA_COMPLETE) {
 		spin_lock_bh(&midc->lock);
 		midc_scan_descriptors(to_middma_device(chan->device), midc);
 		spin_unlock_bh(&midc->lock);
@@ -1225,7 +1225,7 @@ static void middma_shutdown(struct pci_dev *pdev)
  * Initialize the PCI device, map BARs, query driver data.
  * Call setup_dma to complete contoller and chan initilzation
  */
-static int __devinit intel_mid_dma_probe(struct pci_dev *pdev,
+static int intel_mid_dma_probe(struct pci_dev *pdev,
 					const struct pci_device_id *id)
 {
 	struct middma_device *device;
@@ -1308,7 +1308,7 @@ err_enable_device:
  * Free up all resources and data
  * Call shutdown_dma to complete contoller and chan cleanup
  */
-static void __devexit intel_mid_dma_remove(struct pci_dev *pdev)
+static void intel_mid_dma_remove(struct pci_dev *pdev)
 {
 	struct middma_device *device = pci_get_drvdata(pdev);
 
@@ -1405,7 +1405,7 @@ static int dma_runtime_idle(struct device *dev)
 			return -EAGAIN;
 	}
 
-	return pm_schedule_suspend(dev, 0);
+	return 0;
 }
 
 /******************************************************************************
@@ -1432,7 +1432,7 @@ static struct pci_driver intel_mid_dma_pci_driver = {
 	.name		=	"Intel MID DMA",
 	.id_table	=	intel_mid_dma_ids,
 	.probe		=	intel_mid_dma_probe,
-	.remove		=	__devexit_p(intel_mid_dma_remove),
+	.remove		=	intel_mid_dma_remove,
 #ifdef CONFIG_PM
 	.driver = {
 		.pm = &intel_mid_dma_pm,

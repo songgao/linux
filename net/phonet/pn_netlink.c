@@ -61,7 +61,7 @@ static const struct nla_policy ifa_phonet_policy[IFA_MAX+1] = {
 	[IFA_LOCAL] = { .type = NLA_U8 },
 };
 
-static int addr_doit(struct sk_buff *skb, struct nlmsghdr *nlh, void *attr)
+static int addr_doit(struct sk_buff *skb, struct nlmsghdr *nlh)
 {
 	struct net *net = sock_net(skb->sk);
 	struct nlattr *tb[IFA_MAX+1];
@@ -69,6 +69,9 @@ static int addr_doit(struct sk_buff *skb, struct nlmsghdr *nlh, void *attr)
 	struct ifaddrmsg *ifm;
 	int err;
 	u8 pnaddr;
+
+	if (!capable(CAP_NET_ADMIN))
+		return -EPERM;
 
 	if (!capable(CAP_SYS_ADMIN))
 		return -EPERM;
@@ -221,7 +224,7 @@ static const struct nla_policy rtm_phonet_policy[RTA_MAX+1] = {
 	[RTA_OIF] = { .type = NLA_U32 },
 };
 
-static int route_doit(struct sk_buff *skb, struct nlmsghdr *nlh, void *attr)
+static int route_doit(struct sk_buff *skb, struct nlmsghdr *nlh)
 {
 	struct net *net = sock_net(skb->sk);
 	struct nlattr *tb[RTA_MAX+1];
@@ -229,6 +232,9 @@ static int route_doit(struct sk_buff *skb, struct nlmsghdr *nlh, void *attr)
 	struct rtmsg *rtm;
 	int err;
 	u8 dst;
+
+	if (!capable(CAP_NET_ADMIN))
+		return -EPERM;
 
 	if (!capable(CAP_SYS_ADMIN))
 		return -EPERM;

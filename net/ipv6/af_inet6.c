@@ -49,13 +49,14 @@
 #include <net/udp.h>
 #include <net/udplite.h>
 #include <net/tcp.h>
-#include <net/ipip.h>
+#include <net/ping.h>
 #include <net/protocol.h>
 #include <net/inet_common.h>
 #include <net/route.h>
 #include <net/transp_v6.h>
 #include <net/ip6_route.h>
 #include <net/addrconf.h>
+#include <net/ndisc.h>
 #ifdef CONFIG_IPV6_TUNNEL
 #include <net/ip6_tunnel.h>
 #endif
@@ -109,11 +110,6 @@ static int inet6_create(struct net *net, struct socket *sock, int protocol,
 	int try_loading_module = 0;
 	int err;
 
-	if (sock->type != SOCK_RAW &&
-	    sock->type != SOCK_DGRAM &&
-	    !inet_ehash_secret)
-		build_ehash_secret();
-
 	/* Look for the requested type/protocol pair. */
 lookup_protocol:
 	err = -ESOCKTNOSUPPORT;
@@ -160,7 +156,8 @@ lookup_protocol:
 	}
 
 	err = -EPERM;
-	if (sock->type == SOCK_RAW && !kern && !capable(CAP_NET_RAW))
+	if (sock->type == SOCK_RAW && !kern &&
+	    !ns_capable(net->user_ns, CAP_NET_RAW))
 		goto out_rcu_unlock;
 
 	sock->ops = answer->ops;
@@ -282,7 +279,7 @@ int inet6_bind(struct socket *sock, struct sockaddr *uaddr, int addr_len)
 		return -EINVAL;
 
 	snum = ntohs(addr->sin6_port);
-	if (snum && snum < PROT_SOCK && !capable(CAP_NET_BIND_SERVICE))
+	if (snum && snum < PROT_SOCK && !ns_capable(net->user_ns, CAP_NET_BIND_SERVICE))
 		return -EACCES;
 
 	lock_sock(sk);
@@ -322,7 +319,7 @@ int inet6_bind(struct socket *sock, struct sockaddr *uaddr, int addr_len)
 			struct net_device *dev = NULL;
 
 			rcu_read_lock();
-			if (addr_type & IPV6_ADDR_LINKLOCAL) {
+			if (__ipv6_addr_needs_scope_id(addr_type)) {
 				if (addr_len >= sizeof(struct sockaddr_in6) &&
 				    addr->sin6_scope_id) {
 					/* Override any existing binding, if another one
@@ -362,7 +359,7 @@ int inet6_bind(struct socket *sock, struct sockaddr *uaddr, int addr_len)
 	inet->inet_rcv_saddr = v4addr;
 	inet->inet_saddr = v4addr;
 
-	np->rcv_saddr = addr->sin6_addr;
+	sk->sk_v6_rcv_saddr = addr->sin6_addr;
 
 	if (!(addr_type & IPV6_ADDR_MULTICAST))
 		np->saddr = addr->sin6_addr;
@@ -459,19 +456,19 @@ int inet6_getname(struct socket *sock, struct sockaddr *uaddr,
 		    peer == 1)
 			return -ENOTCONN;
 		sin->sin6_port = inet->inet_dport;
-		sin->sin6_addr = np->daddr;
+		sin->sin6_addr = sk->sk_v6_daddr;
 		if (np->sndflow)
 			sin->sin6_flowinfo = np->flow_label;
 	} else {
-		if (ipv6_addr_any(&np->rcv_saddr))
+		if (ipv6_addr_any(&sk->sk_v6_rcv_saddr))
 			sin->sin6_addr = np->saddr;
 		else
-			sin->sin6_addr = np->rcv_saddr;
+			sin->sin6_addr = sk->sk_v6_rcv_saddr;
 
 		sin->sin6_port = inet->inet_sport;
 	}
-	if (ipv6_addr_type(&sin->sin6_addr) & IPV6_ADDR_LINKLOCAL)
-		sin->sin6_scope_id = sk->sk_bound_dev_if;
+	sin->sin6_scope_id = ipv6_iface_scope_id(&sin->sin6_addr,
+						 sk->sk_bound_dev_if);
 	*uaddr_len = sizeof(*sin);
 	return 0;
 }
@@ -653,7 +650,7 @@ int inet6_sk_rebuild_header(struct sock *sk)
 
 		memset(&fl6, 0, sizeof(fl6));
 		fl6.flowi6_proto = sk->sk_protocol;
-		fl6.daddr = np->daddr;
+		fl6.daddr = sk->sk_v6_daddr;
 		fl6.saddr = np->saddr;
 		fl6.flowlabel = np->flow_label;
 		fl6.flowi6_oif = sk->sk_bound_dev_if;
@@ -699,249 +696,9 @@ bool ipv6_opt_accepted(const struct sock *sk, const struct sk_buff *skb)
 }
 EXPORT_SYMBOL_GPL(ipv6_opt_accepted);
 
-static int ipv6_gso_pull_exthdrs(struct sk_buff *skb, int proto)
-{
-	const struct inet6_protocol *ops = NULL;
-
-	for (;;) {
-		struct ipv6_opt_hdr *opth;
-		int len;
-
-		if (proto != NEXTHDR_HOP) {
-			ops = rcu_dereference(inet6_protos[proto]);
-
-			if (unlikely(!ops))
-				break;
-
-			if (!(ops->flags & INET6_PROTO_GSO_EXTHDR))
-				break;
-		}
-
-		if (unlikely(!pskb_may_pull(skb, 8)))
-			break;
-
-		opth = (void *)skb->data;
-		len = ipv6_optlen(opth);
-
-		if (unlikely(!pskb_may_pull(skb, len)))
-			break;
-
-		proto = opth->nexthdr;
-		__skb_pull(skb, len);
-	}
-
-	return proto;
-}
-
-static int ipv6_gso_send_check(struct sk_buff *skb)
-{
-	const struct ipv6hdr *ipv6h;
-	const struct inet6_protocol *ops;
-	int err = -EINVAL;
-
-	if (unlikely(!pskb_may_pull(skb, sizeof(*ipv6h))))
-		goto out;
-
-	ipv6h = ipv6_hdr(skb);
-	__skb_pull(skb, sizeof(*ipv6h));
-	err = -EPROTONOSUPPORT;
-
-	rcu_read_lock();
-	ops = rcu_dereference(inet6_protos[
-		ipv6_gso_pull_exthdrs(skb, ipv6h->nexthdr)]);
-
-	if (likely(ops && ops->gso_send_check)) {
-		skb_reset_transport_header(skb);
-		err = ops->gso_send_check(skb);
-	}
-	rcu_read_unlock();
-
-out:
-	return err;
-}
-
-static struct sk_buff *ipv6_gso_segment(struct sk_buff *skb,
-	netdev_features_t features)
-{
-	struct sk_buff *segs = ERR_PTR(-EINVAL);
-	struct ipv6hdr *ipv6h;
-	const struct inet6_protocol *ops;
-	int proto;
-	struct frag_hdr *fptr;
-	unsigned int unfrag_ip6hlen;
-	u8 *prevhdr;
-	int offset = 0;
-
-	if (!(features & NETIF_F_V6_CSUM))
-		features &= ~NETIF_F_SG;
-
-	if (unlikely(skb_shinfo(skb)->gso_type &
-		     ~(SKB_GSO_UDP |
-		       SKB_GSO_DODGY |
-		       SKB_GSO_TCP_ECN |
-		       SKB_GSO_TCPV6 |
-		       0)))
-		goto out;
-
-	if (unlikely(!pskb_may_pull(skb, sizeof(*ipv6h))))
-		goto out;
-
-	ipv6h = ipv6_hdr(skb);
-	__skb_pull(skb, sizeof(*ipv6h));
-	segs = ERR_PTR(-EPROTONOSUPPORT);
-
-	proto = ipv6_gso_pull_exthdrs(skb, ipv6h->nexthdr);
-	rcu_read_lock();
-	ops = rcu_dereference(inet6_protos[proto]);
-	if (likely(ops && ops->gso_segment)) {
-		skb_reset_transport_header(skb);
-		segs = ops->gso_segment(skb, features);
-	}
-	rcu_read_unlock();
-
-	if (IS_ERR(segs))
-		goto out;
-
-	for (skb = segs; skb; skb = skb->next) {
-		ipv6h = ipv6_hdr(skb);
-		ipv6h->payload_len = htons(skb->len - skb->mac_len -
-					   sizeof(*ipv6h));
-		if (proto == IPPROTO_UDP) {
-			unfrag_ip6hlen = ip6_find_1stfragopt(skb, &prevhdr);
-			fptr = (struct frag_hdr *)(skb_network_header(skb) +
-				unfrag_ip6hlen);
-			fptr->frag_off = htons(offset);
-			if (skb->next != NULL)
-				fptr->frag_off |= htons(IP6_MF);
-			offset += (ntohs(ipv6h->payload_len) -
-				   sizeof(struct frag_hdr));
-		}
-	}
-
-out:
-	return segs;
-}
-
-static struct sk_buff **ipv6_gro_receive(struct sk_buff **head,
-					 struct sk_buff *skb)
-{
-	const struct inet6_protocol *ops;
-	struct sk_buff **pp = NULL;
-	struct sk_buff *p;
-	struct ipv6hdr *iph;
-	unsigned int nlen;
-	unsigned int hlen;
-	unsigned int off;
-	int flush = 1;
-	int proto;
-	__wsum csum;
-
-	off = skb_gro_offset(skb);
-	hlen = off + sizeof(*iph);
-	iph = skb_gro_header_fast(skb, off);
-	if (skb_gro_header_hard(skb, hlen)) {
-		iph = skb_gro_header_slow(skb, hlen, off);
-		if (unlikely(!iph))
-			goto out;
-	}
-
-	skb_gro_pull(skb, sizeof(*iph));
-	skb_set_transport_header(skb, skb_gro_offset(skb));
-
-	flush += ntohs(iph->payload_len) != skb_gro_len(skb);
-
-	rcu_read_lock();
-	proto = iph->nexthdr;
-	ops = rcu_dereference(inet6_protos[proto]);
-	if (!ops || !ops->gro_receive) {
-		__pskb_pull(skb, skb_gro_offset(skb));
-		proto = ipv6_gso_pull_exthdrs(skb, proto);
-		skb_gro_pull(skb, -skb_transport_offset(skb));
-		skb_reset_transport_header(skb);
-		__skb_push(skb, skb_gro_offset(skb));
-
-		ops = rcu_dereference(inet6_protos[proto]);
-		if (!ops || !ops->gro_receive)
-			goto out_unlock;
-
-		iph = ipv6_hdr(skb);
-	}
-
-	NAPI_GRO_CB(skb)->proto = proto;
-
-	flush--;
-	nlen = skb_network_header_len(skb);
-
-	for (p = *head; p; p = p->next) {
-		const struct ipv6hdr *iph2;
-		__be32 first_word; /* <Version:4><Traffic_Class:8><Flow_Label:20> */
-
-		if (!NAPI_GRO_CB(p)->same_flow)
-			continue;
-
-		iph2 = ipv6_hdr(p);
-		first_word = *(__be32 *)iph ^ *(__be32 *)iph2 ;
-
-		/* All fields must match except length and Traffic Class. */
-		if (nlen != skb_network_header_len(p) ||
-		    (first_word & htonl(0xF00FFFFF)) ||
-		    memcmp(&iph->nexthdr, &iph2->nexthdr,
-			   nlen - offsetof(struct ipv6hdr, nexthdr))) {
-			NAPI_GRO_CB(p)->same_flow = 0;
-			continue;
-		}
-		/* flush if Traffic Class fields are different */
-		NAPI_GRO_CB(p)->flush |= !!(first_word & htonl(0x0FF00000));
-		NAPI_GRO_CB(p)->flush |= flush;
-	}
-
-	NAPI_GRO_CB(skb)->flush |= flush;
-
-	csum = skb->csum;
-	skb_postpull_rcsum(skb, iph, skb_network_header_len(skb));
-
-	pp = ops->gro_receive(head, skb);
-
-	skb->csum = csum;
-
-out_unlock:
-	rcu_read_unlock();
-
-out:
-	NAPI_GRO_CB(skb)->flush |= flush;
-
-	return pp;
-}
-
-static int ipv6_gro_complete(struct sk_buff *skb)
-{
-	const struct inet6_protocol *ops;
-	struct ipv6hdr *iph = ipv6_hdr(skb);
-	int err = -ENOSYS;
-
-	iph->payload_len = htons(skb->len - skb_network_offset(skb) -
-				 sizeof(*iph));
-
-	rcu_read_lock();
-	ops = rcu_dereference(inet6_protos[NAPI_GRO_CB(skb)->proto]);
-	if (WARN_ON(!ops || !ops->gro_complete))
-		goto out_unlock;
-
-	err = ops->gro_complete(skb);
-
-out_unlock:
-	rcu_read_unlock();
-
-	return err;
-}
-
 static struct packet_type ipv6_packet_type __read_mostly = {
 	.type = cpu_to_be16(ETH_P_IPV6),
 	.func = ipv6_rcv,
-	.gso_send_check = ipv6_gso_send_check,
-	.gso_segment = ipv6_gso_segment,
-	.gro_receive = ipv6_gro_receive,
-	.gro_complete = ipv6_gro_complete,
 };
 
 static int __init ipv6_packet_init(void)
@@ -957,6 +714,8 @@ static void ipv6_packet_cleanup(void)
 
 static int __net_init ipv6_init_mibs(struct net *net)
 {
+	int i;
+
 	if (snmp_mib_init((void __percpu **)net->mib.udp_stats_in6,
 			  sizeof(struct udp_mib),
 			  __alignof__(struct udp_mib)) < 0)
@@ -969,6 +728,18 @@ static int __net_init ipv6_init_mibs(struct net *net)
 			  sizeof(struct ipstats_mib),
 			  __alignof__(struct ipstats_mib)) < 0)
 		goto err_ip_mib;
+
+	for_each_possible_cpu(i) {
+		struct ipstats_mib *af_inet6_stats;
+		af_inet6_stats = per_cpu_ptr(net->mib.ipv6_statistics[0], i);
+		u64_stats_init(&af_inet6_stats->syncp);
+#if SNMP_ARRAY_SZ == 2
+		af_inet6_stats = per_cpu_ptr(net->mib.ipv6_statistics[1], i);
+		u64_stats_init(&af_inet6_stats->syncp);
+#endif
+	}
+
+
 	if (snmp_mib_init((void __percpu **)net->mib.icmpv6_statistics,
 			  sizeof(struct icmpv6_mib),
 			  __alignof__(struct icmpv6_mib)) < 0)
@@ -1005,6 +776,7 @@ static int __net_init inet6_net_init(struct net *net)
 
 	net->ipv6.sysctl.bindv6only = 0;
 	net->ipv6.sysctl.icmpv6_time = 1*HZ;
+	atomic_set(&net->ipv6.rt_genid, 0);
 
 	err = ipv6_init_mibs(net);
 	if (err)
@@ -1048,13 +820,21 @@ static struct pernet_operations inet6_net_ops = {
 	.exit = inet6_net_exit,
 };
 
+static const struct ipv6_stub ipv6_stub_impl = {
+	.ipv6_sock_mc_join = ipv6_sock_mc_join,
+	.ipv6_sock_mc_drop = ipv6_sock_mc_drop,
+	.ipv6_dst_lookup = ip6_dst_lookup,
+	.udpv6_encap_enable = udpv6_encap_enable,
+	.ndisc_send_na = ndisc_send_na,
+	.nd_tbl	= &nd_tbl,
+};
+
 static int __init inet6_init(void)
 {
-	struct sk_buff *dummy_skb;
 	struct list_head *r;
 	int err = 0;
 
-	BUILD_BUG_ON(sizeof(struct inet6_skb_parm) > sizeof(dummy_skb->cb));
+	BUILD_BUG_ON(sizeof(struct inet6_skb_parm) > FIELD_SIZEOF(struct sk_buff, cb));
 
 	/* Register the socket-side information for inet6_create.  */
 	for (r = &inetsw6[0]; r < &inetsw6[SOCK_MAX]; ++r)
@@ -1081,6 +861,9 @@ static int __init inet6_init(void)
 	if (err)
 		goto out_unregister_udplite_proto;
 
+	err = proto_register(&pingv6_prot, 1);
+	if (err)
+		goto out_unregister_ping_proto;
 
 	/* We MUST register RAW sockets before we create the ICMP6,
 	 * IGMP6, or NDISC control sockets.
@@ -1095,8 +878,6 @@ static int __init inet6_init(void)
 	err = sock_register(&inet6_family_ops);
 	if (err)
 		goto out_sock_register_fail;
-
-	tcpv6_prot.sysctl_mem = init_net.ipv4.sysctl_tcp_mem;
 
 	/*
 	 *	ipngwg API draft makes clear that the correct semantics
@@ -1120,6 +901,9 @@ static int __init inet6_init(void)
 	err = igmp6_init();
 	if (err)
 		goto igmp_fail;
+
+	ipv6_stub = &ipv6_stub_impl;
+
 	err = ipv6_netfilter_init();
 	if (err)
 		goto netfilter_fail;
@@ -1138,6 +922,9 @@ static int __init inet6_init(void)
 	err = ip6_route_init();
 	if (err)
 		goto ip6_route_fail;
+	err = ndisc_late_init();
+	if (err)
+		goto ndisc_late_fail;
 	err = ip6_flowlabel_init();
 	if (err)
 		goto ip6_flowlabel_fail;
@@ -1171,6 +958,10 @@ static int __init inet6_init(void)
 	if (err)
 		goto ipv6_packet_fail;
 
+	err = pingv6_init();
+	if (err)
+		goto pingv6_fail;
+
 #ifdef CONFIG_SYSCTL
 	err = ipv6_sysctl_register();
 	if (err)
@@ -1181,8 +972,10 @@ out:
 
 #ifdef CONFIG_SYSCTL
 sysctl_fail:
-	ipv6_packet_cleanup();
+	pingv6_exit();
 #endif
+pingv6_fail:
+	ipv6_packet_cleanup();
 ipv6_packet_fail:
 	tcpv6_exit();
 tcpv6_fail:
@@ -1198,6 +991,8 @@ ipv6_exthdrs_fail:
 addrconf_fail:
 	ip6_flowlabel_cleanup();
 ip6_flowlabel_fail:
+	ndisc_late_cleanup();
+ndisc_late_fail:
 	ip6_route_cleanup();
 ip6_route_fail:
 #ifdef CONFIG_PROC_FS
@@ -1226,6 +1021,8 @@ register_pernet_fail:
 	rtnl_unregister_all(PF_INET6);
 out_sock_register_fail:
 	rawv6_exit();
+out_unregister_ping_proto:
+	proto_unregister(&pingv6_prot);
 out_unregister_raw_proto:
 	proto_unregister(&rawv6_prot);
 out_unregister_udplite_proto:
@@ -1237,51 +1034,5 @@ out_unregister_tcp_proto:
 	goto out;
 }
 module_init(inet6_init);
-
-static void __exit inet6_exit(void)
-{
-	if (disable_ipv6_mod)
-		return;
-
-	/* First of all disallow new sockets creation. */
-	sock_unregister(PF_INET6);
-	/* Disallow any further netlink messages */
-	rtnl_unregister_all(PF_INET6);
-
-	udpv6_exit();
-	udplitev6_exit();
-	tcpv6_exit();
-
-	/* Cleanup code parts. */
-	ipv6_packet_cleanup();
-	ipv6_frag_exit();
-	ipv6_exthdrs_exit();
-	addrconf_cleanup();
-	ip6_flowlabel_cleanup();
-	ip6_route_cleanup();
-#ifdef CONFIG_PROC_FS
-
-	/* Cleanup code parts. */
-	if6_proc_exit();
-	ipv6_misc_proc_exit();
-	udplite6_proc_exit();
-	raw6_proc_exit();
-#endif
-	ipv6_netfilter_fini();
-	igmp6_cleanup();
-	ndisc_cleanup();
-	ip6_mr_cleanup();
-	icmpv6_cleanup();
-	rawv6_exit();
-
-	unregister_pernet_subsys(&inet6_net_ops);
-	proto_unregister(&rawv6_prot);
-	proto_unregister(&udplitev6_prot);
-	proto_unregister(&udpv6_prot);
-	proto_unregister(&tcpv6_prot);
-
-	rcu_barrier(); /* Wait for completion of call_rcu()'s */
-}
-module_exit(inet6_exit);
 
 MODULE_ALIAS_NETPROTO(PF_INET6);

@@ -259,15 +259,17 @@ static int adt7411_detect(struct i2c_client *client,
 
 	val = i2c_smbus_read_byte_data(client, ADT7411_REG_MANUFACTURER_ID);
 	if (val < 0 || val != ADT7411_MANUFACTURER_ID) {
-		dev_dbg(&client->dev, "Wrong manufacturer ID. Got %d, "
-			"expected %d\n", val, ADT7411_MANUFACTURER_ID);
+		dev_dbg(&client->dev,
+			"Wrong manufacturer ID. Got %d, expected %d\n",
+			val, ADT7411_MANUFACTURER_ID);
 		return -ENODEV;
 	}
 
 	val = i2c_smbus_read_byte_data(client, ADT7411_REG_DEVICE_ID);
 	if (val < 0 || val != ADT7411_DEVICE_ID) {
-		dev_dbg(&client->dev, "Wrong device ID. Got %d, "
-			"expected %d\n", val, ADT7411_DEVICE_ID);
+		dev_dbg(&client->dev,
+			"Wrong device ID. Got %d, expected %d\n",
+			val, ADT7411_DEVICE_ID);
 		return -ENODEV;
 	}
 
@@ -276,7 +278,7 @@ static int adt7411_detect(struct i2c_client *client,
 	return 0;
 }
 
-static int __devinit adt7411_probe(struct i2c_client *client,
+static int adt7411_probe(struct i2c_client *client,
 				   const struct i2c_device_id *id)
 {
 	struct adt7411_data *data;
@@ -317,7 +319,7 @@ static int __devinit adt7411_probe(struct i2c_client *client,
 	return ret;
 }
 
-static int __devexit adt7411_remove(struct i2c_client *client)
+static int adt7411_remove(struct i2c_client *client)
 {
 	struct adt7411_data *data = i2c_get_clientdata(client);
 
@@ -337,7 +339,7 @@ static struct i2c_driver adt7411_driver = {
 		.name		= "adt7411",
 	},
 	.probe  = adt7411_probe,
-	.remove	= __devexit_p(adt7411_remove),
+	.remove	= adt7411_remove,
 	.id_table = adt7411_id,
 	.detect = adt7411_detect,
 	.address_list = normal_i2c,

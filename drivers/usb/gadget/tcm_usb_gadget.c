@@ -370,7 +370,7 @@ err:
 	return -ENOMEM;
 }
 
-void bot_cleanup_old_alt(struct f_uas *fu)
+static void bot_cleanup_old_alt(struct f_uas *fu)
 {
 	if (!(fu->flags & USBG_ENABLED))
 		return;
@@ -472,7 +472,7 @@ static int usbg_bot_setup(struct usb_function *f,
 		bot_enqueue_cmd_cbw(fu);
 		return 0;
 		break;
-	};
+	}
 	return -ENOTSUPP;
 }
 
@@ -617,7 +617,7 @@ static void uasp_status_data_cmpl(struct usb_ep *ep, struct usb_request *req)
 
 	default:
 		BUG();
-	};
+	}
 	return;
 
 cleanup:
@@ -1384,7 +1384,7 @@ static struct se_node_acl *usbg_alloc_fabric_acl(struct se_portal_group *se_tpg)
 
 	nacl = kzalloc(sizeof(struct usbg_nacl), GFP_KERNEL);
 	if (!nacl) {
-		printk(KERN_ERR "Unable to alocate struct usbg_nacl\n");
+		printk(KERN_ERR "Unable to allocate struct usbg_nacl\n");
 		return NULL;
 	}
 
@@ -1467,9 +1467,8 @@ static int usbg_get_cmd_state(struct se_cmd *se_cmd)
 	return 0;
 }
 
-static int usbg_queue_tm_rsp(struct se_cmd *se_cmd)
+static void usbg_queue_tm_rsp(struct se_cmd *se_cmd)
 {
-	return 0;
 }
 
 static const char *usbg_check_wwn(const char *name)
@@ -1794,9 +1793,10 @@ static int tcm_usbg_drop_nexus(struct usbg_tpg *tpg)
 	tpg->tpg_nexus = NULL;
 
 	kfree(tv_nexus);
+	ret = 0;
 out:
 	mutex_unlock(&tpg->tpg_mutex);
-	return 0;
+	return ret;
 }
 
 static ssize_t tcm_usbg_tpg_store_nexus(
@@ -1923,15 +1923,15 @@ static int usbg_register_configfs(void)
 	}
 
 	fabric->tf_ops = usbg_ops;
-	TF_CIT_TMPL(fabric)->tfc_wwn_cit.ct_attrs = usbg_wwn_attrs;
-	TF_CIT_TMPL(fabric)->tfc_tpg_base_cit.ct_attrs = usbg_base_attrs;
-	TF_CIT_TMPL(fabric)->tfc_tpg_attrib_cit.ct_attrs = NULL;
-	TF_CIT_TMPL(fabric)->tfc_tpg_param_cit.ct_attrs = NULL;
-	TF_CIT_TMPL(fabric)->tfc_tpg_np_base_cit.ct_attrs = NULL;
-	TF_CIT_TMPL(fabric)->tfc_tpg_nacl_base_cit.ct_attrs = NULL;
-	TF_CIT_TMPL(fabric)->tfc_tpg_nacl_attrib_cit.ct_attrs = NULL;
-	TF_CIT_TMPL(fabric)->tfc_tpg_nacl_auth_cit.ct_attrs = NULL;
-	TF_CIT_TMPL(fabric)->tfc_tpg_nacl_param_cit.ct_attrs = NULL;
+	fabric->tf_cit_tmpl.tfc_wwn_cit.ct_attrs = usbg_wwn_attrs;
+	fabric->tf_cit_tmpl.tfc_tpg_base_cit.ct_attrs = usbg_base_attrs;
+	fabric->tf_cit_tmpl.tfc_tpg_attrib_cit.ct_attrs = NULL;
+	fabric->tf_cit_tmpl.tfc_tpg_param_cit.ct_attrs = NULL;
+	fabric->tf_cit_tmpl.tfc_tpg_np_base_cit.ct_attrs = NULL;
+	fabric->tf_cit_tmpl.tfc_tpg_nacl_base_cit.ct_attrs = NULL;
+	fabric->tf_cit_tmpl.tfc_tpg_nacl_attrib_cit.ct_attrs = NULL;
+	fabric->tf_cit_tmpl.tfc_tpg_nacl_auth_cit.ct_attrs = NULL;
+	fabric->tf_cit_tmpl.tfc_tpg_nacl_param_cit.ct_attrs = NULL;
 	ret = target_fabric_configfs_register(fabric);
 	if (ret < 0) {
 		printk(KERN_ERR "target_fabric_configfs_register() failed"
@@ -2139,6 +2139,7 @@ static struct usb_descriptor_header *uasp_fs_function_desc[] = {
 	(struct usb_descriptor_header *) &uasp_status_pipe_desc,
 	(struct usb_descriptor_header *) &uasp_fs_cmd_desc,
 	(struct usb_descriptor_header *) &uasp_cmd_pipe_desc,
+	NULL,
 };
 
 static struct usb_descriptor_header *uasp_hs_function_desc[] = {
@@ -2239,6 +2240,7 @@ static int usbg_bind(struct usb_configuration *c, struct usb_function *f)
 	struct usb_gadget	*gadget = c->cdev->gadget;
 	struct usb_ep		*ep;
 	int			iface;
+	int			ret;
 
 	iface = usb_interface_id(c, f);
 	if (iface < 0)
@@ -2289,6 +2291,11 @@ static int usbg_bind(struct usb_configuration *c, struct usb_function *f)
 		uasp_ss_status_desc.bEndpointAddress;
 	uasp_fs_cmd_desc.bEndpointAddress = uasp_ss_cmd_desc.bEndpointAddress;
 
+	ret = usb_assign_descriptors(f, uasp_fs_function_desc,
+			uasp_hs_function_desc, uasp_ss_function_desc);
+	if (ret)
+		goto ep_fail;
+
 	return 0;
 ep_fail:
 	pr_err("Can't claim all required eps\n");
@@ -2304,6 +2311,7 @@ static void usbg_unbind(struct usb_configuration *c, struct usb_function *f)
 {
 	struct f_uas *fu = to_f_uas(f);
 
+	usb_free_all_descriptors(f);
 	kfree(fu);
 }
 
@@ -2384,9 +2392,6 @@ static int usbg_cfg_bind(struct usb_configuration *c)
 	if (!fu)
 		return -ENOMEM;
 	fu->function.name = "Target Function";
-	fu->function.descriptors = uasp_fs_function_desc;
-	fu->function.hs_descriptors = uasp_hs_function_desc;
-	fu->function.ss_descriptors = uasp_ss_function_desc;
 	fu->function.bind = usbg_bind;
 	fu->function.unbind = usbg_unbind;
 	fu->function.set_alt = usbg_set_alt;

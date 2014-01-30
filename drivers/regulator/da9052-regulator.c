@@ -129,16 +129,16 @@ static int da9052_dcdc_set_current_limit(struct regulator_dev *rdev, int min_uA,
 	else if (offset == 0)
 		row = 1;
 
-	if (min_uA > da9052_current_limits[row][DA9052_MAX_UA] ||
-	    max_uA < da9052_current_limits[row][DA9052_MIN_UA])
-		return -EINVAL;
-
 	for (i = DA9052_CURRENT_RANGE - 1; i >= 0; i--) {
-		if (da9052_current_limits[row][i] <= max_uA) {
+		if ((min_uA <= da9052_current_limits[row][i]) &&
+		    (da9052_current_limits[row][i] <= max_uA)) {
 			reg_val = i;
 			break;
 		}
 	}
+
+	if (i < 0)
+		return -EINVAL;
 
 	/* Determine the even or odd position of the buck current limit
 	 * register field
@@ -365,7 +365,7 @@ static inline struct da9052_regulator_info *find_regulator_info(u8 chip_id,
 	return NULL;
 }
 
-static int __devinit da9052_regulator_probe(struct platform_device *pdev)
+static int da9052_regulator_probe(struct platform_device *pdev)
 {
 	struct regulator_config config = { };
 	struct da9052_regulator *regulator;
@@ -378,7 +378,7 @@ static int __devinit da9052_regulator_probe(struct platform_device *pdev)
 		return -ENOMEM;
 
 	da9052 = dev_get_drvdata(pdev->dev.parent);
-	pdata = da9052->dev->platform_data;
+	pdata = dev_get_platdata(da9052->dev);
 	regulator->da9052 = da9052;
 
 	regulator->info = find_regulator_info(regulator->da9052->chip_id,
@@ -395,9 +395,9 @@ static int __devinit da9052_regulator_probe(struct platform_device *pdev)
 		config.init_data = pdata->regulators[pdev->id];
 	} else {
 #ifdef CONFIG_OF
-		struct device_node *nproot = da9052->dev->of_node;
-		struct device_node *np;
+		struct device_node *nproot, *np;
 
+		nproot = of_node_get(da9052->dev->of_node);
 		if (!nproot)
 			return -ENODEV;
 
@@ -414,11 +414,13 @@ static int __devinit da9052_regulator_probe(struct platform_device *pdev)
 				break;
 			}
 		}
+		of_node_put(nproot);
 #endif
 	}
 
-	regulator->rdev = regulator_register(&regulator->info->reg_desc,
-					     &config);
+	regulator->rdev = devm_regulator_register(&pdev->dev,
+						  &regulator->info->reg_desc,
+						  &config);
 	if (IS_ERR(regulator->rdev)) {
 		dev_err(&pdev->dev, "failed to register regulator %s\n",
 			regulator->info->reg_desc.name);
@@ -430,17 +432,8 @@ static int __devinit da9052_regulator_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static int __devexit da9052_regulator_remove(struct platform_device *pdev)
-{
-	struct da9052_regulator *regulator = platform_get_drvdata(pdev);
-
-	regulator_unregister(regulator->rdev);
-	return 0;
-}
-
 static struct platform_driver da9052_regulator_driver = {
 	.probe = da9052_regulator_probe,
-	.remove = __devexit_p(da9052_regulator_remove),
 	.driver = {
 		.name = "da9052-regulator",
 		.owner = THIS_MODULE,

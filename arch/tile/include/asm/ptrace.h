@@ -24,8 +24,7 @@ typedef unsigned long pt_reg_t;
 #include <uapi/asm/ptrace.h>
 
 #define PTRACE_O_MASK_TILE	(PTRACE_O_TRACEMIGRATE)
-#define PT_TRACE_MIGRATE	0x00080000
-#define PT_TRACE_MASK_TILE	(PT_TRACE_MIGRATE)
+#define PT_TRACE_MIGRATE	PT_EVENT_FLAG(PTRACE_EVENT_MIGRATE)
 
 /* Flag bits in pt_regs.flags */
 #define PT_FLAGS_DISABLE_IRQ    1  /* on return to kernel, disable irqs */
@@ -34,17 +33,20 @@ typedef unsigned long pt_reg_t;
 
 #ifndef __ASSEMBLY__
 
+#define regs_return_value(regs) ((regs)->regs[0])
 #define instruction_pointer(regs) ((regs)->pc)
 #define profile_pc(regs) instruction_pointer(regs)
+#define user_stack_pointer(regs) ((regs)->sp)
 
 /* Does the process account for user or for system time? */
-#define user_mode(regs) (EX1_PL((regs)->ex1) == USER_PL)
+#define user_mode(regs) (EX1_PL((regs)->ex1) < KERNEL_PL)
 
 /* Fill in a struct pt_regs with the current kernel registers. */
 struct pt_regs *get_pt_regs(struct pt_regs *);
 
 /* Trace the current syscall. */
-extern void do_syscall_trace(void);
+extern int do_syscall_trace_enter(struct pt_regs *regs);
+extern void do_syscall_trace_exit(struct pt_regs *regs);
 
 #define arch_has_single_step()	(1)
 
@@ -78,8 +80,7 @@ extern void single_step_execve(void);
 
 struct task_struct;
 
-extern void send_sigtrap(struct task_struct *tsk, struct pt_regs *regs,
-			 int error_code);
+extern void send_sigtrap(struct task_struct *tsk, struct pt_regs *regs);
 
 #ifdef __tilegx__
 /* We need this since sigval_t has a user pointer in it, for GETSIGINFO etc. */

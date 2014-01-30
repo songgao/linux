@@ -16,6 +16,7 @@
 #include <linux/clk.h>
 #include <linux/io.h>
 #include <linux/pwm.h>
+#include <linux/of.h>
 #include <linux/of_device.h>
 
 /* i.MX1 and i.MX21 share the same PWM function block: */
@@ -43,7 +44,6 @@ struct imx_chip {
 	struct clk	*clk_per;
 	struct clk	*clk_ipg;
 
-	int		enabled;
 	void __iomem	*mmio_base;
 
 	struct pwm_chip	chip;
@@ -135,7 +135,7 @@ static int imx_pwm_config_v2(struct pwm_chip *chip,
 		MX3_PWMCR_DOZEEN | MX3_PWMCR_WAITEN |
 		MX3_PWMCR_DBGEN | MX3_PWMCR_CLKSRC_IPG_HIGH;
 
-	if (imx->enabled)
+	if (test_bit(PWMF_ENABLED, &pwm->flags))
 		cr |= MX3_PWMCR_EN;
 
 	writel(cr, imx->mmio_base + MX3_PWMCR);
@@ -186,8 +186,6 @@ static int imx_pwm_enable(struct pwm_chip *chip, struct pwm_device *pwm)
 
 	imx->set_enable(chip, true);
 
-	imx->enabled = 1;
-
 	return 0;
 }
 
@@ -198,7 +196,6 @@ static void imx_pwm_disable(struct pwm_chip *chip, struct pwm_device *pwm)
 	imx->set_enable(chip, false);
 
 	clk_disable_unprepare(imx->clk_per);
-	imx->enabled = 0;
 }
 
 static struct pwm_ops imx_pwm_ops = {
@@ -231,11 +228,11 @@ static const struct of_device_id imx_pwm_dt_ids[] = {
 };
 MODULE_DEVICE_TABLE(of, imx_pwm_dt_ids);
 
-static int __devinit imx_pwm_probe(struct platform_device *pdev)
+static int imx_pwm_probe(struct platform_device *pdev)
 {
 	const struct of_device_id *of_id =
 			of_match_device(imx_pwm_dt_ids, &pdev->dev);
-	struct imx_pwm_data *data;
+	const struct imx_pwm_data *data;
 	struct imx_chip *imx;
 	struct resource *r;
 	int ret = 0;
@@ -269,14 +266,9 @@ static int __devinit imx_pwm_probe(struct platform_device *pdev)
 	imx->chip.npwm = 1;
 
 	r = platform_get_resource(pdev, IORESOURCE_MEM, 0);
-	if (r == NULL) {
-		dev_err(&pdev->dev, "no memory resource defined\n");
-		return -ENODEV;
-	}
-
-	imx->mmio_base = devm_request_and_ioremap(&pdev->dev, r);
-	if (imx->mmio_base == NULL)
-		return -EADDRNOTAVAIL;
+	imx->mmio_base = devm_ioremap_resource(&pdev->dev, r);
+	if (IS_ERR(imx->mmio_base))
+		return PTR_ERR(imx->mmio_base);
 
 	data = of_id->data;
 	imx->config = data->config;
@@ -290,7 +282,7 @@ static int __devinit imx_pwm_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static int __devexit imx_pwm_remove(struct platform_device *pdev)
+static int imx_pwm_remove(struct platform_device *pdev)
 {
 	struct imx_chip *imx;
 
@@ -304,10 +296,11 @@ static int __devexit imx_pwm_remove(struct platform_device *pdev)
 static struct platform_driver imx_pwm_driver = {
 	.driver		= {
 		.name	= "imx-pwm",
-		.of_match_table = of_match_ptr(imx_pwm_dt_ids),
+		.owner = THIS_MODULE,
+		.of_match_table = imx_pwm_dt_ids,
 	},
 	.probe		= imx_pwm_probe,
-	.remove		= __devexit_p(imx_pwm_remove),
+	.remove		= imx_pwm_remove,
 };
 
 module_platform_driver(imx_pwm_driver);

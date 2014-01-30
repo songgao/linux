@@ -39,7 +39,6 @@ static ssize_t ad9850_set_parameter(struct device *dev,
 					const char *buf,
 					size_t len)
 {
-	struct spi_message msg;
 	struct spi_transfer xfer;
 	int ret;
 	struct ad9850_config *config = (struct ad9850_config *)buf;
@@ -50,9 +49,7 @@ static ssize_t ad9850_set_parameter(struct device *dev,
 	xfer.tx_buf = config;
 	mutex_lock(&st->lock);
 
-	spi_message_init(&msg);
-	spi_message_add_tail(&xfer, &msg);
-	ret = spi_sync(st->sdev, &msg);
+	ret = spi_sync_transfer(st->sdev, &xfer, 1);
 	if (ret)
 		goto error_ret;
 error_ret:
@@ -77,17 +74,15 @@ static const struct iio_info ad9850_info = {
 	.driver_module = THIS_MODULE,
 };
 
-static int __devinit ad9850_probe(struct spi_device *spi)
+static int ad9850_probe(struct spi_device *spi)
 {
 	struct ad9850_state *st;
 	struct iio_dev *idev;
 	int ret = 0;
 
-	idev = iio_device_alloc(sizeof(*st));
-	if (idev == NULL) {
-		ret = -ENOMEM;
-		goto error_ret;
-	}
+	idev = devm_iio_device_alloc(&spi->dev, sizeof(*st));
+	if (!idev)
+		return -ENOMEM;
 	spi_set_drvdata(spi, idev);
 	st = iio_priv(idev);
 	mutex_init(&st->lock);
@@ -99,24 +94,18 @@ static int __devinit ad9850_probe(struct spi_device *spi)
 
 	ret = iio_device_register(idev);
 	if (ret)
-		goto error_free_dev;
+		return ret;
 	spi->max_speed_hz = 2000000;
 	spi->mode = SPI_MODE_3;
 	spi->bits_per_word = 16;
 	spi_setup(spi);
 
 	return 0;
-
-error_free_dev:
-	iio_device_free(idev);
-error_ret:
-	return ret;
 }
 
-static int __devexit ad9850_remove(struct spi_device *spi)
+static int ad9850_remove(struct spi_device *spi)
 {
 	iio_device_unregister(spi_get_drvdata(spi));
-	iio_device_free(spi_get_drvdata(spi));
 
 	return 0;
 }
@@ -127,7 +116,7 @@ static struct spi_driver ad9850_driver = {
 		.owner = THIS_MODULE,
 	},
 	.probe = ad9850_probe,
-	.remove = __devexit_p(ad9850_remove),
+	.remove = ad9850_remove,
 };
 module_spi_driver(ad9850_driver);
 

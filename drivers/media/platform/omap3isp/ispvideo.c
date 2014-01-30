@@ -27,6 +27,7 @@
 #include <linux/clk.h>
 #include <linux/mm.h>
 #include <linux/module.h>
+#include <linux/omap-iommu.h>
 #include <linux/pagemap.h>
 #include <linux/scatterlist.h>
 #include <linux/sched.h>
@@ -34,9 +35,6 @@
 #include <linux/vmalloc.h>
 #include <media/v4l2-dev.h>
 #include <media/v4l2-ioctl.h>
-#include <plat/iommu.h>
-#include <plat/iovmm.h>
-#include <plat/omap-pm.h>
 
 #include "ispvideo.h"
 #include "isp.h"
@@ -221,7 +219,7 @@ isp_video_remote_subdev(struct isp_video *video, u32 *pad)
 {
 	struct media_pad *remote;
 
-	remote = media_entity_remote_source(&video->pad);
+	remote = media_entity_remote_pad(&video->pad);
 
 	if (remote == NULL ||
 	    media_entity_type(remote->entity) != MEDIA_ENT_T_V4L2_SUBDEV)
@@ -316,7 +314,7 @@ static int isp_video_validate_pipeline(struct isp_pipeline *pipe)
 		 * entity can be found, and stop checking the pipeline if the
 		 * source entity isn't a subdev.
 		 */
-		pad = media_entity_remote_source(pad);
+		pad = media_entity_remote_pad(pad);
 		if (pad == NULL)
 			return -EPIPE;
 
@@ -341,14 +339,11 @@ __isp_video_get_format(struct isp_video *video, struct v4l2_format *format)
 	if (subdev == NULL)
 		return -EINVAL;
 
-	mutex_lock(&video->mutex);
-
 	fmt.pad = pad;
 	fmt.which = V4L2_SUBDEV_FORMAT_ACTIVE;
-	ret = v4l2_subdev_call(subdev, pad, get_fmt, NULL, &fmt);
-	if (ret == -ENOIOCTLCMD)
-		ret = -EINVAL;
 
+	mutex_lock(&video->mutex);
+	ret = v4l2_subdev_call(subdev, pad, get_fmt, NULL, &fmt);
 	mutex_unlock(&video->mutex);
 
 	if (ret)
@@ -792,7 +787,7 @@ isp_video_get_crop(struct file *file, void *fh, struct v4l2_crop *crop)
 }
 
 static int
-isp_video_set_crop(struct file *file, void *fh, struct v4l2_crop *crop)
+isp_video_set_crop(struct file *file, void *fh, const struct v4l2_crop *crop)
 {
 	struct isp_video *video = video_drvdata(file);
 	struct v4l2_subdev *subdev;
@@ -903,7 +898,7 @@ static int isp_video_check_external_subdevs(struct isp_video *video,
 			continue;
 
 		/* ISP entities have always sink pad == 0. Find source. */
-		source_pad = media_entity_remote_source(&ents[i]->pads[0]);
+		source_pad = media_entity_remote_pad(&ents[i]->pads[0]);
 		if (source_pad == NULL)
 			continue;
 
@@ -1391,7 +1386,8 @@ int omap3isp_video_register(struct isp_video *video, struct v4l2_device *vdev)
 
 	ret = video_register_device(&video->video, VFL_TYPE_GRABBER, -1);
 	if (ret < 0)
-		printk(KERN_ERR "%s: could not register video device (%d)\n",
+		dev_err(video->isp->dev,
+			"%s: could not register video device (%d)\n",
 			__func__, ret);
 
 	return ret;

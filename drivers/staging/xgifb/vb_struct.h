@@ -56,7 +56,7 @@ struct XGI330_LCDDataTablStruct {
 	unsigned char  PANELID;
 	unsigned short MASK;
 	unsigned short CAP;
-	unsigned short DATAPTR;
+	void const *DATAPTR;
 };
 
 struct XGI330_TVDataTablStruct {
@@ -81,7 +81,6 @@ struct XGI_XG21CRT1Struct {
 struct XGI330_LCDCapStruct {
 	unsigned char	LCD_ID;
 	unsigned short	LCD_Capability;
-	unsigned char	LCD_SetFlag;
 	unsigned char	LCD_HSyncWidth;
 	unsigned char	LCD_VSyncWidth;
 	unsigned char	LCD_VCLK;
@@ -89,16 +88,6 @@ struct XGI330_LCDCapStruct {
 	unsigned char	LCDA_VCLKData2;
 	unsigned char	LCUCHAR_VCLKData1;
 	unsigned char	LCUCHAR_VCLKData2;
-	unsigned char	PSC_S1;
-	unsigned char	PSC_S2;
-	unsigned char	PSC_S3;
-	unsigned char	PSC_S4;
-	unsigned char	PSC_S5;
-	unsigned char	PWD_2B;
-	unsigned char	PWD_2C;
-	unsigned char	PWD_2D;
-	unsigned char	PWD_2E;
-	unsigned char	PWD_2F;
 	unsigned char	Spectrum_31;
 	unsigned char	Spectrum_32;
 	unsigned char	Spectrum_33;
@@ -145,7 +134,7 @@ struct vb_device_info {
 	unsigned short   LCDHRS, LCDVRS, LCDHDES, LCDVDES;
 
 	unsigned short   ModeType;
-	unsigned short   IF_DEF_LVDS, IF_DEF_TRUMPION, IF_DEF_DSTN;
+	unsigned short   IF_DEF_LVDS;
 	unsigned short   IF_DEF_CRT2Monitor;
 	unsigned short   IF_DEF_YPbPr;
 	unsigned short   IF_DEF_HiVision;
@@ -156,42 +145,18 @@ struct vb_device_info {
 	unsigned short   SelectCRT2Rate;
 
 	void __iomem *FBAddr;
-	unsigned long BaseAddr;
 
-	unsigned char (*CR6B)[4];
-	unsigned char (*CR6E)[4];
-	unsigned char (*CR6F)[32];
-	unsigned char (*CR89)[2];
+	unsigned char const *SR18;
+	unsigned char const (*CR40)[3];
 
-	unsigned char (*SR15)[8];
-	unsigned char (*CR40)[8];
+	struct SiS_MCLKData const *MCLKData;
 
-	unsigned char  *AGPReg;
-	unsigned char  *SR16;
-	unsigned char  SR21;
-	unsigned char  SR22;
-	unsigned char  SR25;
-	struct SiS_MCLKData  *MCLKData;
-	struct XGI_ECLKDataStruct  *ECLKData;
-
-	unsigned char   *ScreenOffset;
-	unsigned char   *pXGINew_DRAMTypeDefinition;
 	unsigned char   XGINew_CR97;
 
-	struct XGI330_LCDCapStruct  *LCDCapList;
+	struct XGI330_LCDCapStruct const *LCDCapList;
 
-	struct XGI_TimingHStruct  *TimingH;
-	struct XGI_TimingVStruct  *TimingV;
-
-	struct SiS_StandTable_S  *StandTable;
-	struct XGI_ExtStruct         *EModeIDTable;
-	struct XGI_Ext2Struct        *RefIndex;
-	struct XGI_CRT1TableStruct    *XGINEWUB_CRT1Table;
-	struct SiS_VCLKData    *VCLKData;
-	struct SiS_VBVCLKData  *VBVCLKData;
-	struct SiS_StResInfo_S   *StResInfo;
-	struct SiS_ModeResInfo_S *ModeResInfo;
-	struct XGI_XG21CRT1Struct	  *UpdateCRT1;
+	struct XGI_TimingHStruct TimingH;
+	struct XGI_TimingVStruct TimingV;
 
 	int ram_type;
 	int ram_channel;

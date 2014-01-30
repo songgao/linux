@@ -91,17 +91,13 @@ static int ath9k_hw_def_get_eeprom_rev(struct ath_hw *ah)
 
 static bool __ath9k_hw_def_fill_eeprom(struct ath_hw *ah)
 {
-	struct ath_common *common = ath9k_hw_common(ah);
 	u16 *eep_data = (u16 *)&ah->eeprom.def;
 	int addr, ar5416_eep_start_loc = 0x100;
 
 	for (addr = 0; addr < SIZE_EEPROM_DEF; addr++) {
-		if (!ath9k_hw_nvram_read(common, addr + ar5416_eep_start_loc,
-					 eep_data)) {
-			ath_err(ath9k_hw_common(ah),
-				"Unable to read eeprom region\n");
+		if (!ath9k_hw_nvram_read(ah, addr + ar5416_eep_start_loc,
+					 eep_data))
 			return false;
-		}
 		eep_data++;
 	}
 	return true;
@@ -209,12 +205,12 @@ static u32 ath9k_hw_def_dump_eeprom(struct ath_hw *ah, bool dump_base_hdr,
 	struct base_eep_header *pBase = &eep->baseEepHeader;
 
 	if (!dump_base_hdr) {
-		len += snprintf(buf + len, size - len,
-				"%20s :\n", "2GHz modal Header");
+		len += scnprintf(buf + len, size - len,
+				 "%20s :\n", "2GHz modal Header");
 		len = ath9k_def_dump_modal_eeprom(buf, len, size,
 						   &eep->modalHeader[0]);
-		len += snprintf(buf + len, size - len,
-				"%20s :\n", "5GHz modal Header");
+		len += scnprintf(buf + len, size - len,
+				 "%20s :\n", "5GHz modal Header");
 		len = ath9k_def_dump_modal_eeprom(buf, len, size,
 						   &eep->modalHeader[1]);
 		goto out;
@@ -244,8 +240,8 @@ static u32 ath9k_hw_def_dump_eeprom(struct ath_hw *ah, bool dump_base_hdr,
 	PR_EEP("Cal Bin Build", (pBase->binBuildNumber >> 8) & 0xFF);
 	PR_EEP("OpenLoop Power Ctrl", pBase->openLoopPwrCntl);
 
-	len += snprintf(buf + len, size - len, "%20s : %pM\n", "MacAddress",
-			pBase->macAddr);
+	len += scnprintf(buf + len, size - len, "%20s : %pM\n", "MacAddress",
+			 pBase->macAddr);
 
 out:
 	if (len > size)
@@ -271,7 +267,7 @@ static int ath9k_hw_def_check_eeprom(struct ath_hw *ah)
 	bool need_swap = false;
 	int i, addr, size;
 
-	if (!ath9k_hw_nvram_read(common, AR5416_EEPROM_MAGIC_OFFSET, &magic)) {
+	if (!ath9k_hw_nvram_read(ah, AR5416_EEPROM_MAGIC_OFFSET, &magic)) {
 		ath_err(common, "Reading Magic # failed\n");
 		return false;
 	}

@@ -161,7 +161,7 @@ static struct snd_soc_dai_link mx27vis_aic32x4_dai = {
 	.name		= "tlv320aic32x4",
 	.stream_name	= "TLV320AIC32X4",
 	.codec_dai_name	= "tlv320aic32x4-hifi",
-	.platform_name	= "imx-pcm-audio.0",
+	.platform_name	= "imx-ssi.0",
 	.codec_name	= "tlv320aic32x4.0-0018",
 	.cpu_dai_name	= "imx-ssi.0",
 	.ops		= &mx27vis_aic32x4_snd_ops,
@@ -180,7 +180,7 @@ static struct snd_soc_card mx27vis_aic32x4 = {
 	.num_dapm_routes = ARRAY_SIZE(aic32x4_dapm_routes),
 };
 
-static int __devinit mx27vis_aic32x4_probe(struct platform_device *pdev)
+static int mx27vis_aic32x4_probe(struct platform_device *pdev)
 {
 	struct snd_mx27vis_platform_data *pdata = pdev->dev.platform_data;
 	int ret;
@@ -219,7 +219,7 @@ static int __devinit mx27vis_aic32x4_probe(struct platform_device *pdev)
 	return ret;
 }
 
-static int __devexit mx27vis_aic32x4_remove(struct platform_device *pdev)
+static int mx27vis_aic32x4_remove(struct platform_device *pdev)
 {
 	snd_soc_unregister_card(&mx27vis_aic32x4);
 
@@ -232,7 +232,7 @@ static struct platform_driver mx27vis_aic32x4_audio_driver = {
 		.owner = THIS_MODULE,
 	},
 	.probe = mx27vis_aic32x4_probe,
-	.remove = __devexit_p(mx27vis_aic32x4_remove),
+	.remove = mx27vis_aic32x4_remove,
 };
 
 module_platform_driver(mx27vis_aic32x4_audio_driver);

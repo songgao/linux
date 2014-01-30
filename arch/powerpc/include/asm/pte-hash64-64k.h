@@ -23,7 +23,7 @@
 
 /* Note the full page bits must be in the same location as for normal
  * 4k pages as the same assembly will be used to insert 64K pages
- * wether the kernel has CONFIG_PPC_64K_PAGES or not
+ * whether the kernel has CONFIG_PPC_64K_PAGES or not
  */
 #define _PAGE_F_SECOND  0x00008000 /* full page: hidx bits */
 #define _PAGE_F_GIX     0x00007000 /* full page: hidx bits */
@@ -47,7 +47,7 @@
  * generic accessors and iterators here
  */
 #define __real_pte(e,p) 	((real_pte_t) { \
-			(e), ((e) & _PAGE_COMBO) ? \
+			(e), (pte_val(e) & _PAGE_COMBO) ? \
 				(pte_val(*((p) + PTRS_PER_PTE))) : 0 })
 #define __rpte_to_hidx(r,index)	((pte_val((r).pte) & _PAGE_COMBO) ? \
         (((r).hidx >> ((index)<<2)) & 0xf) : ((pte_val((r).pte) >> 12) & 0xf))

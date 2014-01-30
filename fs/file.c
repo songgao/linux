@@ -23,23 +23,9 @@
 #include <linux/rcupdate.h>
 #include <linux/workqueue.h>
 
-struct fdtable_defer {
-	spinlock_t lock;
-	struct work_struct wq;
-	struct fdtable *next;
-};
-
 int sysctl_nr_open __read_mostly = 1024*1024;
 int sysctl_nr_open_min = BITS_PER_LONG;
 int sysctl_nr_open_max = 1024 * 1024; /* raised later */
-
-/*
- * We use this list to defer free fdtables that have vmalloced
- * sets/arrays. By keeping a per-cpu list, we avoid having to embed
- * the work_struct in fdtable itself which avoids a 64 byte (i386) increase in
- * this per-task structure.
- */
-static DEFINE_PER_CPU(struct fdtable_defer, fdtable_defer_list);
 
 static void *alloc_fdmem(size_t size)
 {
@@ -67,46 +53,9 @@ static void __free_fdtable(struct fdtable *fdt)
 	kfree(fdt);
 }
 
-static void free_fdtable_work(struct work_struct *work)
-{
-	struct fdtable_defer *f =
-		container_of(work, struct fdtable_defer, wq);
-	struct fdtable *fdt;
-
-	spin_lock_bh(&f->lock);
-	fdt = f->next;
-	f->next = NULL;
-	spin_unlock_bh(&f->lock);
-	while(fdt) {
-		struct fdtable *next = fdt->next;
-
-		__free_fdtable(fdt);
-		fdt = next;
-	}
-}
-
 static void free_fdtable_rcu(struct rcu_head *rcu)
 {
-	struct fdtable *fdt = container_of(rcu, struct fdtable, rcu);
-	struct fdtable_defer *fddef;
-
-	BUG_ON(!fdt);
-	BUG_ON(fdt->max_fds <= NR_OPEN_DEFAULT);
-
-	if (!is_vmalloc_addr(fdt->fd) && !is_vmalloc_addr(fdt->open_fds)) {
-		kfree(fdt->fd);
-		kfree(fdt->open_fds);
-		kfree(fdt);
-	} else {
-		fddef = &get_cpu_var(fdtable_defer_list);
-		spin_lock(&fddef->lock);
-		fdt->next = fddef->next;
-		fddef->next = fdt;
-		/* vmallocs are handled from the workqueue context */
-		schedule_work(&fddef->wq);
-		spin_unlock(&fddef->lock);
-		put_cpu_var(fdtable_defer_list);
-	}
+	__free_fdtable(container_of(rcu, struct fdtable, rcu));
 }
 
 /*
@@ -174,7 +123,6 @@ static struct fdtable * alloc_fdtable(unsigned int nr)
 	fdt->open_fds = data;
 	data += nr / BITS_PER_BYTE;
 	fdt->close_on_exec = data;
-	fdt->next = NULL;
 
 	return fdt;
 
@@ -221,7 +169,7 @@ static int expand_fdtable(struct files_struct *files, int nr)
 		/* Continue as planned */
 		copy_fdtable(new_fdt, cur_fdt);
 		rcu_assign_pointer(files->fdt, new_fdt);
-		if (cur_fdt->max_fds > NR_OPEN_DEFAULT)
+		if (cur_fdt != &files->fdtab)
 			call_rcu(&cur_fdt->rcu, free_fdtable_rcu);
 	} else {
 		/* Somebody else expanded, so undo our attempt */
@@ -316,7 +264,6 @@ struct files_struct *dup_fd(struct files_struct *oldf, int *errorp)
 	new_fdt->close_on_exec = newf->close_on_exec_init;
 	new_fdt->open_fds = newf->open_fds_init;
 	new_fdt->fd = &newf->fd_array[0];
-	new_fdt->next = NULL;
 
 	spin_lock(&oldf->file_lock);
 	old_fdt = files_fdtable(oldf);
@@ -490,19 +437,8 @@ void exit_files(struct task_struct *tsk)
 	}
 }
 
-static void __devinit fdtable_defer_list_init(int cpu)
-{
-	struct fdtable_defer *fddef = &per_cpu(fdtable_defer_list, cpu);
-	spin_lock_init(&fddef->lock);
-	INIT_WORK(&fddef->wq, free_fdtable_work);
-	fddef->next = NULL;
-}
-
 void __init files_defer_init(void)
 {
-	int i;
-	for_each_possible_cpu(i)
-		fdtable_defer_list_init(i);
 	sysctl_nr_open_max = min((size_t)INT_MAX, ~(size_t)0/sizeof(void *)) &
 			     -BITS_PER_LONG;
 }
@@ -516,14 +452,8 @@ struct files_struct init_files = {
 		.close_on_exec	= init_files.close_on_exec_init,
 		.open_fds	= init_files.open_fds_init,
 	},
-	.file_lock	= __SPIN_LOCK_UNLOCKED(init_task.file_lock),
+	.file_lock	= __SPIN_LOCK_UNLOCKED(init_files.file_lock),
 };
-
-void daemonize_descriptors(void)
-{
-	atomic_inc(&init_files.count);
-	reset_files_struct(&init_files);
-}
 
 /*
  * allocate a file descriptor, mark it busy.
@@ -685,7 +615,6 @@ void do_close_on_exec(struct files_struct *files)
 	struct fdtable *fdt;
 
 	/* exec unshares first */
-	BUG_ON(atomic_read(&files->count) != 1);
 	spin_lock(&files->file_lock);
 	for (i = 0; ; i++) {
 		unsigned long set;
@@ -900,7 +829,7 @@ int replace_fd(unsigned fd, struct file *file, unsigned flags)
 		return __close_fd(files, fd);
 
 	if (fd >= rlimit(RLIMIT_NOFILE))
-		return -EMFILE;
+		return -EBADF;
 
 	spin_lock(&files->file_lock);
 	err = expand_files(files, fd);
@@ -926,7 +855,7 @@ SYSCALL_DEFINE3(dup3, unsigned int, oldfd, unsigned int, newfd, int, flags)
 		return -EINVAL;
 
 	if (newfd >= rlimit(RLIMIT_NOFILE))
-		return -EMFILE;
+		return -EBADF;
 
 	spin_lock(&files->file_lock);
 	err = expand_files(files, newfd);
@@ -995,16 +924,18 @@ int iterate_fd(struct files_struct *files, unsigned n,
 		const void *p)
 {
 	struct fdtable *fdt;
-	struct file *file;
 	int res = 0;
 	if (!files)
 		return 0;
 	spin_lock(&files->file_lock);
-	fdt = files_fdtable(files);
-	while (!res && n < fdt->max_fds) {
-		file = rcu_dereference_check_fdtable(files, fdt->fd[n++]);
-		if (file)
-			res = f(p, file, n);
+	for (fdt = files_fdtable(files); n < fdt->max_fds; n++) {
+		struct file *file;
+		file = rcu_dereference_check_fdtable(files, fdt->fd[n]);
+		if (!file)
+			continue;
+		res = f(p, file, n);
+		if (res)
+			break;
 	}
 	spin_unlock(&files->file_lock);
 	return res;

@@ -56,12 +56,13 @@ static void rs_poll(unsigned long);
 static int rs_open(struct tty_struct *tty, struct file * filp)
 {
 	tty->port = &serial_port;
-	spin_lock(&timer_lock);
+	spin_lock_bh(&timer_lock);
 	if (tty->count == 1) {
-		setup_timer(&serial_timer, rs_poll, (unsigned long)tty);
+		setup_timer(&serial_timer, rs_poll,
+				(unsigned long)&serial_port);
 		mod_timer(&serial_timer, jiffies + SERIAL_TIMER_VALUE);
 	}
-	spin_unlock(&timer_lock);
+	spin_unlock_bh(&timer_lock);
 
 	return 0;
 }
@@ -91,28 +92,26 @@ static int rs_write(struct tty_struct * tty,
 {
 	/* see drivers/char/serialX.c to reference original version */
 
-	__simc (SYS_write, 1, (unsigned long)buf, count, 0, 0);
+	simc_write(1, buf, count);
 	return count;
 }
 
 static void rs_poll(unsigned long priv)
 {
-	struct tty_struct* tty = (struct tty_struct*) priv;
-
-	struct timeval tv = { .tv_sec = 0, .tv_usec = 0 };
+	struct tty_port *port = (struct tty_port *)priv;
 	int i = 0;
 	unsigned char c;
 
 	spin_lock(&timer_lock);
 
-	while (__simc(SYS_select_one, 0, XTISS_SELECT_ONE_READ, (int)&tv,0,0)){
-		__simc (SYS_read, 0, (unsigned long)&c, 1, 0, 0);
-		tty_insert_flip_char(tty, c, TTY_NORMAL);
+	while (simc_poll(0)) {
+		simc_read(0, &c, 1);
+		tty_insert_flip_char(port, c, TTY_NORMAL);
 		i++;
 	}
 
 	if (i)
-		tty_flip_buffer_push(tty);
+		tty_flip_buffer_push(port);
 
 
 	mod_timer(&serial_timer, jiffies + SERIAL_TIMER_VALUE);
@@ -122,12 +121,7 @@ static void rs_poll(unsigned long priv)
 
 static int rs_put_char(struct tty_struct *tty, unsigned char ch)
 {
-	char buf[2];
-
-	buf[0] = ch;
-	buf[1] = '\0';		/* Is this NULL necessary? */
-	__simc (SYS_write, 1, (unsigned long) buf, 1, 0, 0);
-	return 1;
+	return rs_write(tty, &ch, 1);
 }
 
 static void rs_flush_chars(struct tty_struct *tty)
@@ -226,6 +220,7 @@ static __exit void rs_exit(void)
 		printk("ISS_SERIAL: failed to unregister serial driver (%d)\n",
 		       error);
 	put_tty_driver(serial_driver);
+	tty_port_destroy(&serial_port);
 }
 
 
@@ -248,8 +243,7 @@ static void iss_console_write(struct console *co, const char *s, unsigned count)
 	int len = strlen(s);
 
 	if (s != 0 && *s != 0)
-		__simc (SYS_write, 1, (unsigned long)s,
-			count < len ? count : len,0,0);
+		simc_write(1, s, count < len ? count : len);
 }
 
 static struct tty_driver* iss_console_device(struct console *c, int *index)

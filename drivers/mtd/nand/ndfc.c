@@ -30,6 +30,7 @@
 #include <linux/mtd/ndfc.h>
 #include <linux/slab.h>
 #include <linux/mtd/mtd.h>
+#include <linux/of_address.h>
 #include <linux/of_platform.h>
 #include <asm/io.h>
 
@@ -197,7 +198,7 @@ err:
 	return ret;
 }
 
-static int __devinit ndfc_probe(struct platform_device *ofdev)
+static int ndfc_probe(struct platform_device *ofdev)
 {
 	struct ndfc_controller *ndfc;
 	const __be32 *reg;
@@ -256,7 +257,7 @@ static int __devinit ndfc_probe(struct platform_device *ofdev)
 	return 0;
 }
 
-static int __devexit ndfc_remove(struct platform_device *ofdev)
+static int ndfc_remove(struct platform_device *ofdev)
 {
 	struct ndfc_controller *ndfc = dev_get_drvdata(&ofdev->dev);
 
@@ -279,7 +280,7 @@ static struct platform_driver ndfc_driver = {
 		.of_match_table = ndfc_match,
 	},
 	.probe = ndfc_probe,
-	.remove = __devexit_p(ndfc_remove),
+	.remove = ndfc_remove,
 };
 
 module_platform_driver(ndfc_driver);

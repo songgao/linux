@@ -26,25 +26,6 @@
 /*
  * System call wrappers for the AArch32 compatibility layer.
  */
-compat_sys_fork_wrapper:
-	mov	x0, sp
-	b	compat_sys_fork
-ENDPROC(compat_sys_fork_wrapper)
-
-compat_sys_vfork_wrapper:
-	mov	x0, sp
-	b	compat_sys_vfork
-ENDPROC(compat_sys_vfork_wrapper)
-
-compat_sys_execve_wrapper:
-	mov	x3, sp
-	b	compat_sys_execve
-ENDPROC(compat_sys_execve_wrapper)
-
-compat_sys_clone_wrapper:
-	mov	x5, sp
-	b	compat_sys_clone
-ENDPROC(compat_sys_clone_wrapper)
 
 compat_sys_sigreturn_wrapper:
 	mov	x0, sp
@@ -57,11 +38,6 @@ compat_sys_rt_sigreturn_wrapper:
 	mov	x27, #0		// prevent syscall restart handling (why)
 	b	compat_sys_rt_sigreturn
 ENDPROC(compat_sys_rt_sigreturn_wrapper)
-
-compat_sys_sigaltstack_wrapper:
-	ldr	x2, [sp, #S_COMPAT_SP]
-	b	compat_do_sigaltstack
-ENDPROC(compat_sys_sigaltstack_wrapper)
 
 compat_sys_statfs64_wrapper:
 	mov	w3, #84
@@ -82,70 +58,51 @@ ENDPROC(compat_sys_fstatfs64_wrapper)
  * in registers or that take 32-bit parameters which require sign
  * extension.
  */
-compat_sys_lseek_wrapper:
-	sxtw	x1, w1
-	b	sys_lseek
-ENDPROC(compat_sys_lseek_wrapper)
-
 compat_sys_pread64_wrapper:
-	orr	x3, x4, x5, lsl #32
+	regs_to_64	x3, x4, x5
 	b	sys_pread64
 ENDPROC(compat_sys_pread64_wrapper)
 
 compat_sys_pwrite64_wrapper:
-	orr	x3, x4, x5, lsl #32
+	regs_to_64	x3, x4, x5
 	b	sys_pwrite64
 ENDPROC(compat_sys_pwrite64_wrapper)
 
 compat_sys_truncate64_wrapper:
-	orr	x1, x2, x3, lsl #32
+	regs_to_64	x1, x2, x3
 	b	sys_truncate
 ENDPROC(compat_sys_truncate64_wrapper)
 
 compat_sys_ftruncate64_wrapper:
-	orr	x1, x2, x3, lsl #32
+	regs_to_64	x1, x2, x3
 	b	sys_ftruncate
 ENDPROC(compat_sys_ftruncate64_wrapper)
 
 compat_sys_readahead_wrapper:
-	orr	x1, x2, x3, lsl #32
+	regs_to_64	x1, x2, x3
 	mov	w2, w4
 	b	sys_readahead
 ENDPROC(compat_sys_readahead_wrapper)
 
-compat_sys_lookup_dcookie:
-	orr	x0, x0, x1, lsl #32
-	mov	w1, w2
-	mov	w2, w3
-	b	sys_lookup_dcookie
-ENDPROC(compat_sys_lookup_dcookie)
-
 compat_sys_fadvise64_64_wrapper:
 	mov	w6, w1
-	orr	x1, x2, x3, lsl #32
-	orr	x2, x4, x5, lsl #32
+	regs_to_64	x1, x2, x3
+	regs_to_64	x2, x4, x5
 	mov	w3, w6
 	b	sys_fadvise64_64
 ENDPROC(compat_sys_fadvise64_64_wrapper)
 
 compat_sys_sync_file_range2_wrapper:
-	orr	x2, x2, x3, lsl #32
-	orr	x3, x4, x5, lsl #32
+	regs_to_64	x2, x2, x3
+	regs_to_64	x3, x4, x5
 	b	sys_sync_file_range2
 ENDPROC(compat_sys_sync_file_range2_wrapper)
 
 compat_sys_fallocate_wrapper:
-	orr	x2, x2, x3, lsl #32
-	orr	x3, x4, x5, lsl #32
+	regs_to_64	x2, x2, x3
+	regs_to_64	x3, x4, x5
 	b	sys_fallocate
 ENDPROC(compat_sys_fallocate_wrapper)
-
-compat_sys_fanotify_mark_wrapper:
-	orr	x2, x2, x3, lsl #32
-	mov	w3, w4
-	mov	w4, w5
-	b	sys_fanotify_mark
-ENDPROC(compat_sys_fanotify_mark_wrapper)
 
 #undef __SYSCALL
 #define __SYSCALL(x, y)		.quad	y	// x

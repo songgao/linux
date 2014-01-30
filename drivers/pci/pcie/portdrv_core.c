@@ -46,7 +46,7 @@ static void release_pcie_device(struct device *dev)
  * pcie_port_msix_add_entry - add entry to given array of MSI-X entries
  * @entries: Array of MSI-X entries
  * @new_entry: Index of the entry to add to the array
- * @nr_entries: Number of entries aleady in the array
+ * @nr_entries: Number of entries already in the array
  *
  * Return value: Position of the added entry in the array
  */
@@ -120,8 +120,7 @@ static int pcie_port_enable_msix(struct pci_dev *dev, int *vectors, int mask)
 		 * the value in this field indicates which MSI-X Table entry is
 		 * used to generate the interrupt message."
 		 */
-		pos = pci_pcie_cap(dev);
-		pci_read_config_word(dev, pos + PCI_EXP_FLAGS, &reg16);
+		pcie_capability_read_word(dev, PCI_EXP_FLAGS, &reg16);
 		entry = (reg16 & PCI_EXP_FLAGS_IRQ) >> 9;
 		if (entry >= nr_entries)
 			goto Error;
@@ -261,18 +260,20 @@ static int get_port_device_capability(struct pci_dev *dev)
 	if (pcie_ports_disabled)
 		return 0;
 
-	err = pcie_port_platform_notify(dev, &cap_mask);
-	if (!pcie_ports_auto) {
-		cap_mask = PCIE_PORT_SERVICE_PME | PCIE_PORT_SERVICE_HP
-				| PCIE_PORT_SERVICE_VC;
-		if (pci_aer_available())
-			cap_mask |= PCIE_PORT_SERVICE_AER;
-	} else if (err) {
+	cap_mask = PCIE_PORT_SERVICE_PME | PCIE_PORT_SERVICE_HP
+			| PCIE_PORT_SERVICE_VC;
+	if (pci_aer_available())
+		cap_mask |= PCIE_PORT_SERVICE_AER;
+
+	if (pcie_ports_auto) {
+		err = pcie_port_platform_notify(dev, &cap_mask);
+		if (err)
 			return 0;
 	}
 
 	/* Hot-Plug Capable */
-	if (cap_mask & PCIE_PORT_SERVICE_HP) {
+	if ((cap_mask & PCIE_PORT_SERVICE_HP) &&
+	    pcie_caps_reg(dev) & PCI_EXP_FLAGS_SLOT) {
 		pcie_capability_read_dword(dev, PCI_EXP_SLTCAP, &reg32);
 		if (reg32 & PCI_EXP_SLTCAP_HPC) {
 			services |= PCIE_PORT_SERVICE_HP;

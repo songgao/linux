@@ -28,7 +28,9 @@
 #include "internal.h"
 
 static void notrace pstore_ftrace_call(unsigned long ip,
-				       unsigned long parent_ip)
+				       unsigned long parent_ip,
+				       struct ftrace_ops *op,
+				       struct pt_regs *regs)
 {
 	unsigned long flags;
 	struct pstore_ftrace_record rec = {};
@@ -42,7 +44,7 @@ static void notrace pstore_ftrace_call(unsigned long ip,
 	rec.parent_ip = parent_ip;
 	pstore_ftrace_encode_cpu(&rec, raw_smp_processor_id());
 	psinfo->write_buf(PSTORE_TYPE_FTRACE, 0, NULL, 0, (void *)&rec,
-			  sizeof(rec), psinfo);
+			  0, sizeof(rec), psinfo);
 
 	local_irq_restore(flags);
 }

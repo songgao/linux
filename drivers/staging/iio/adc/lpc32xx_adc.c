@@ -103,7 +103,7 @@ static const struct iio_info lpc32xx_adc_iio_info = {
 	.type = IIO_VOLTAGE,				\
 	.indexed = 1,					\
 	.channel = _index,				\
-	.info_mask = IIO_CHAN_INFO_RAW_SEPARATE_BIT,	\
+	.info_mask_separate = BIT(IIO_CHAN_INFO_RAW),	\
 	.address = AD_IN * _index,			\
 	.scan_index = _index,				\
 }
@@ -126,7 +126,7 @@ static irqreturn_t lpc32xx_adc_isr(int irq, void *dev_id)
 	return IRQ_HANDLED;
 }
 
-static int __devinit lpc32xx_adc_probe(struct platform_device *pdev)
+static int lpc32xx_adc_probe(struct platform_device *pdev)
 {
 	struct lpc32xx_adc_info *info = NULL;
 	struct resource *res;
@@ -137,43 +137,39 @@ static int __devinit lpc32xx_adc_probe(struct platform_device *pdev)
 	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
 	if (!res) {
 		dev_err(&pdev->dev, "failed to get platform I/O memory\n");
-		retval = -EBUSY;
-		goto errout1;
+		return -EBUSY;
 	}
 
-	iodev = iio_device_alloc(sizeof(struct lpc32xx_adc_info));
-	if (!iodev) {
-		dev_err(&pdev->dev, "failed allocating iio device\n");
-		retval = -ENOMEM;
-		goto errout1;
-	}
+	iodev = devm_iio_device_alloc(&pdev->dev, sizeof(*info));
+	if (!iodev)
+		return -ENOMEM;
 
 	info = iio_priv(iodev);
 
-	info->adc_base = ioremap(res->start, res->end - res->start + 1);
+	info->adc_base = devm_ioremap(&pdev->dev, res->start,
+						resource_size(res));
 	if (!info->adc_base) {
 		dev_err(&pdev->dev, "failed mapping memory\n");
-		retval = -EBUSY;
-		goto errout2;
+		return -EBUSY;
 	}
 
-	info->clk = clk_get(&pdev->dev, NULL);
+	info->clk = devm_clk_get(&pdev->dev, NULL);
 	if (IS_ERR(info->clk)) {
 		dev_err(&pdev->dev, "failed getting clock\n");
-		goto errout3;
+		return PTR_ERR(info->clk);
 	}
 
 	irq = platform_get_irq(pdev, 0);
-	if ((irq < 0) || (irq >= NR_IRQS)) {
+	if (irq <= 0) {
 		dev_err(&pdev->dev, "failed getting interrupt resource\n");
-		retval = -EINVAL;
-		goto errout4;
+		return -EINVAL;
 	}
 
-	retval = request_irq(irq, lpc32xx_adc_isr, 0, MOD_NAME, info);
+	retval = devm_request_irq(&pdev->dev, irq, lpc32xx_adc_isr, 0,
+								MOD_NAME, info);
 	if (retval < 0) {
 		dev_err(&pdev->dev, "failed requesting interrupt\n");
-		goto errout4;
+		return retval;
 	}
 
 	platform_set_drvdata(pdev, iodev);
@@ -189,36 +185,18 @@ static int __devinit lpc32xx_adc_probe(struct platform_device *pdev)
 
 	retval = iio_device_register(iodev);
 	if (retval)
-		goto errout5;
+		return retval;
 
 	dev_info(&pdev->dev, "LPC32XX ADC driver loaded, IRQ %d\n", irq);
 
 	return 0;
-
-errout5:
-	free_irq(irq, info);
-errout4:
-	clk_put(info->clk);
-errout3:
-	iounmap(info->adc_base);
-errout2:
-	iio_device_free(iodev);
-errout1:
-	return retval;
 }
 
-static int __devexit lpc32xx_adc_remove(struct platform_device *pdev)
+static int lpc32xx_adc_remove(struct platform_device *pdev)
 {
 	struct iio_dev *iodev = platform_get_drvdata(pdev);
-	struct lpc32xx_adc_info *info = iio_priv(iodev);
-	int irq = platform_get_irq(pdev, 0);
 
 	iio_device_unregister(iodev);
-	free_irq(irq, info);
-	platform_set_drvdata(pdev, NULL);
-	clk_put(info->clk);
-	iounmap(info->adc_base);
-	iio_device_free(iodev);
 
 	return 0;
 }
@@ -233,7 +211,7 @@ MODULE_DEVICE_TABLE(of, lpc32xx_adc_match);
 
 static struct platform_driver lpc32xx_adc_driver = {
 	.probe		= lpc32xx_adc_probe,
-	.remove		= __devexit_p(lpc32xx_adc_remove),
+	.remove		= lpc32xx_adc_remove,
 	.driver		= {
 		.name	= MOD_NAME,
 		.owner	= THIS_MODULE,

@@ -65,10 +65,12 @@
 			  (1 << BOOKE_IRQPRIO_CRITICAL))
 
 extern unsigned long kvmppc_booke_handlers;
+extern unsigned long kvmppc_booke_handler_addr[];
 
 void kvmppc_set_msr(struct kvm_vcpu *vcpu, u32 new_msr);
 void kvmppc_mmu_msr_notify(struct kvm_vcpu *vcpu, u32 old_msr);
 
+void kvmppc_set_epcr(struct kvm_vcpu *vcpu, u32 new_epcr);
 void kvmppc_set_tcr(struct kvm_vcpu *vcpu, u32 new_tcr);
 void kvmppc_set_tsr_bits(struct kvm_vcpu *vcpu, u32 tsr_bits);
 void kvmppc_clr_tsr_bits(struct kvm_vcpu *vcpu, u32 tsr_bits);
@@ -96,6 +98,30 @@ enum int_class {
 };
 
 void kvmppc_set_pending_interrupt(struct kvm_vcpu *vcpu, enum int_class type);
+
+extern void kvmppc_mmu_destroy_44x(struct kvm_vcpu *vcpu);
+extern int kvmppc_core_emulate_op_44x(struct kvm_run *run, struct kvm_vcpu *vcpu,
+				      unsigned int inst, int *advance);
+extern int kvmppc_core_emulate_mtspr_44x(struct kvm_vcpu *vcpu, int sprn,
+					 ulong spr_val);
+extern int kvmppc_core_emulate_mfspr_44x(struct kvm_vcpu *vcpu, int sprn,
+					 ulong *spr_val);
+extern void kvmppc_mmu_destroy_e500(struct kvm_vcpu *vcpu);
+extern int kvmppc_core_emulate_op_e500(struct kvm_run *run,
+				       struct kvm_vcpu *vcpu,
+				       unsigned int inst, int *advance);
+extern int kvmppc_core_emulate_mtspr_e500(struct kvm_vcpu *vcpu, int sprn,
+					  ulong spr_val);
+extern int kvmppc_core_emulate_mfspr_e500(struct kvm_vcpu *vcpu, int sprn,
+					  ulong *spr_val);
+extern void kvmppc_mmu_destroy_e500(struct kvm_vcpu *vcpu);
+extern int kvmppc_core_emulate_op_e500(struct kvm_run *run,
+				       struct kvm_vcpu *vcpu,
+				       unsigned int inst, int *advance);
+extern int kvmppc_core_emulate_mtspr_e500(struct kvm_vcpu *vcpu, int sprn,
+					  ulong spr_val);
+extern int kvmppc_core_emulate_mfspr_e500(struct kvm_vcpu *vcpu, int sprn,
+					  ulong *spr_val);
 
 /*
  * Load up guest vcpu FP state if it's needed.
@@ -126,5 +152,10 @@ static inline void kvmppc_save_guest_fp(struct kvm_vcpu *vcpu)
 	if (vcpu->fpu_active && (current->thread.regs->msr & MSR_FP))
 		giveup_fpu(current);
 #endif
+}
+
+static inline void kvmppc_clear_dbsr(void)
+{
+	mtspr(SPRN_DBSR, mfspr(SPRN_DBSR));
 }
 #endif /* __KVM_BOOKE_H__ */

@@ -66,7 +66,7 @@ static ssize_t jz4740_hwmon_read_adcin(struct device *dev,
 
 	mutex_lock(&hwmon->lock);
 
-	INIT_COMPLETION(*completion);
+	reinit_completion(completion);
 
 	enable_irq(hwmon->irq);
 	hwmon->cell->enable(to_platform_device(dev));
@@ -102,7 +102,7 @@ static const struct attribute_group jz4740_hwmon_attr_group = {
 	.attrs = jz4740_hwmon_attributes,
 };
 
-static int __devinit jz4740_hwmon_probe(struct platform_device *pdev)
+static int jz4740_hwmon_probe(struct platform_device *pdev)
 {
 	int ret;
 	struct jz4740_hwmon *hwmon;
@@ -172,7 +172,7 @@ err_remove_file:
 	return ret;
 }
 
-static int __devexit jz4740_hwmon_remove(struct platform_device *pdev)
+static int jz4740_hwmon_remove(struct platform_device *pdev)
 {
 	struct jz4740_hwmon *hwmon = platform_get_drvdata(pdev);
 
@@ -184,7 +184,7 @@ static int __devexit jz4740_hwmon_remove(struct platform_device *pdev)
 
 static struct platform_driver jz4740_hwmon_driver = {
 	.probe	= jz4740_hwmon_probe,
-	.remove = __devexit_p(jz4740_hwmon_remove),
+	.remove = jz4740_hwmon_remove,
 	.driver = {
 		.name = "jz4740-hwmon",
 		.owner = THIS_MODULE,

@@ -38,7 +38,7 @@
 #include <linux/v4l2-dv-timings.h>
 #include <media/v4l2-device.h>
 #include <media/v4l2-ctrls.h>
-#include <media/v4l2-chip-ident.h>
+#include <media/v4l2-dv-timings.h>
 #include <media/adv7604.h>
 
 static int debug;
@@ -53,8 +53,7 @@ MODULE_LICENSE("GPL");
 /* ADV7604 system clock frequency */
 #define ADV7604_fsc (28636360)
 
-#define DIGITAL_INPUT ((state->prim_mode == ADV7604_PRIM_MODE_HDMI_COMP) || \
-			(state->prim_mode == ADV7604_PRIM_MODE_HDMI_GR))
+#define DIGITAL_INPUT (state->mode == ADV7604_MODE_HDMI)
 
 /*
  **********************************************************************
@@ -68,7 +67,7 @@ struct adv7604_state {
 	struct v4l2_subdev sd;
 	struct media_pad pad;
 	struct v4l2_ctrl_handler hdl;
-	enum adv7604_prim_mode prim_mode;
+	enum adv7604_mode mode;
 	struct v4l2_dv_timings timings;
 	u8 edid[256];
 	unsigned edid_blocks;
@@ -77,6 +76,8 @@ struct adv7604_state {
 	struct workqueue_struct *work_queues;
 	struct delayed_work delayed_work_enable_hotplug;
 	bool connector_hdmi;
+	bool restart_stdi_once;
+	u32 prev_input_status;
 
 	/* i2c clients */
 	struct i2c_client *i2c_avlink;
@@ -106,7 +107,6 @@ static const struct v4l2_dv_timings adv7604_timings[] = {
 	V4L2_DV_BT_CEA_720X576P50,
 	V4L2_DV_BT_CEA_1280X720P24,
 	V4L2_DV_BT_CEA_1280X720P25,
-	V4L2_DV_BT_CEA_1280X720P30,
 	V4L2_DV_BT_CEA_1280X720P50,
 	V4L2_DV_BT_CEA_1280X720P60,
 	V4L2_DV_BT_CEA_1920X1080P24,
@@ -115,6 +115,7 @@ static const struct v4l2_dv_timings adv7604_timings[] = {
 	V4L2_DV_BT_CEA_1920X1080P50,
 	V4L2_DV_BT_CEA_1920X1080P60,
 
+	/* sorted by DMT ID */
 	V4L2_DV_BT_DMT_640X350P85,
 	V4L2_DV_BT_DMT_640X400P85,
 	V4L2_DV_BT_DMT_720X400P85,
@@ -164,6 +165,89 @@ static const struct v4l2_dv_timings adv7604_timings[] = {
 	{ },
 };
 
+struct adv7604_video_standards {
+	struct v4l2_dv_timings timings;
+	u8 vid_std;
+	u8 v_freq;
+};
+
+/* sorted by number of lines */
+static const struct adv7604_video_standards adv7604_prim_mode_comp[] = {
+	/* { V4L2_DV_BT_CEA_720X480P59_94, 0x0a, 0x00 }, TODO flickering */
+	{ V4L2_DV_BT_CEA_720X576P50, 0x0b, 0x00 },
+	{ V4L2_DV_BT_CEA_1280X720P50, 0x19, 0x01 },
+	{ V4L2_DV_BT_CEA_1280X720P60, 0x19, 0x00 },
+	{ V4L2_DV_BT_CEA_1920X1080P24, 0x1e, 0x04 },
+	{ V4L2_DV_BT_CEA_1920X1080P25, 0x1e, 0x03 },
+	{ V4L2_DV_BT_CEA_1920X1080P30, 0x1e, 0x02 },
+	{ V4L2_DV_BT_CEA_1920X1080P50, 0x1e, 0x01 },
+	{ V4L2_DV_BT_CEA_1920X1080P60, 0x1e, 0x00 },
+	/* TODO add 1920x1080P60_RB (CVT timing) */
+	{ },
+};
+
+/* sorted by number of lines */
+static const struct adv7604_video_standards adv7604_prim_mode_gr[] = {
+	{ V4L2_DV_BT_DMT_640X480P60, 0x08, 0x00 },
+	{ V4L2_DV_BT_DMT_640X480P72, 0x09, 0x00 },
+	{ V4L2_DV_BT_DMT_640X480P75, 0x0a, 0x00 },
+	{ V4L2_DV_BT_DMT_640X480P85, 0x0b, 0x00 },
+	{ V4L2_DV_BT_DMT_800X600P56, 0x00, 0x00 },
+	{ V4L2_DV_BT_DMT_800X600P60, 0x01, 0x00 },
+	{ V4L2_DV_BT_DMT_800X600P72, 0x02, 0x00 },
+	{ V4L2_DV_BT_DMT_800X600P75, 0x03, 0x00 },
+	{ V4L2_DV_BT_DMT_800X600P85, 0x04, 0x00 },
+	{ V4L2_DV_BT_DMT_1024X768P60, 0x0c, 0x00 },
+	{ V4L2_DV_BT_DMT_1024X768P70, 0x0d, 0x00 },
+	{ V4L2_DV_BT_DMT_1024X768P75, 0x0e, 0x00 },
+	{ V4L2_DV_BT_DMT_1024X768P85, 0x0f, 0x00 },
+	{ V4L2_DV_BT_DMT_1280X1024P60, 0x05, 0x00 },
+	{ V4L2_DV_BT_DMT_1280X1024P75, 0x06, 0x00 },
+	{ V4L2_DV_BT_DMT_1360X768P60, 0x12, 0x00 },
+	{ V4L2_DV_BT_DMT_1366X768P60, 0x13, 0x00 },
+	{ V4L2_DV_BT_DMT_1400X1050P60, 0x14, 0x00 },
+	{ V4L2_DV_BT_DMT_1400X1050P75, 0x15, 0x00 },
+	{ V4L2_DV_BT_DMT_1600X1200P60, 0x16, 0x00 }, /* TODO not tested */
+	/* TODO add 1600X1200P60_RB (not a DMT timing) */
+	{ V4L2_DV_BT_DMT_1680X1050P60, 0x18, 0x00 },
+	{ V4L2_DV_BT_DMT_1920X1200P60_RB, 0x19, 0x00 }, /* TODO not tested */
+	{ },
+};
+
+/* sorted by number of lines */
+static const struct adv7604_video_standards adv7604_prim_mode_hdmi_comp[] = {
+	{ V4L2_DV_BT_CEA_720X480P59_94, 0x0a, 0x00 },
+	{ V4L2_DV_BT_CEA_720X576P50, 0x0b, 0x00 },
+	{ V4L2_DV_BT_CEA_1280X720P50, 0x13, 0x01 },
+	{ V4L2_DV_BT_CEA_1280X720P60, 0x13, 0x00 },
+	{ V4L2_DV_BT_CEA_1920X1080P24, 0x1e, 0x04 },
+	{ V4L2_DV_BT_CEA_1920X1080P25, 0x1e, 0x03 },
+	{ V4L2_DV_BT_CEA_1920X1080P30, 0x1e, 0x02 },
+	{ V4L2_DV_BT_CEA_1920X1080P50, 0x1e, 0x01 },
+	{ V4L2_DV_BT_CEA_1920X1080P60, 0x1e, 0x00 },
+	{ },
+};
+
+/* sorted by number of lines */
+static const struct adv7604_video_standards adv7604_prim_mode_hdmi_gr[] = {
+	{ V4L2_DV_BT_DMT_640X480P60, 0x08, 0x00 },
+	{ V4L2_DV_BT_DMT_640X480P72, 0x09, 0x00 },
+	{ V4L2_DV_BT_DMT_640X480P75, 0x0a, 0x00 },
+	{ V4L2_DV_BT_DMT_640X480P85, 0x0b, 0x00 },
+	{ V4L2_DV_BT_DMT_800X600P56, 0x00, 0x00 },
+	{ V4L2_DV_BT_DMT_800X600P60, 0x01, 0x00 },
+	{ V4L2_DV_BT_DMT_800X600P72, 0x02, 0x00 },
+	{ V4L2_DV_BT_DMT_800X600P75, 0x03, 0x00 },
+	{ V4L2_DV_BT_DMT_800X600P85, 0x04, 0x00 },
+	{ V4L2_DV_BT_DMT_1024X768P60, 0x0c, 0x00 },
+	{ V4L2_DV_BT_DMT_1024X768P70, 0x0d, 0x00 },
+	{ V4L2_DV_BT_DMT_1024X768P75, 0x0e, 0x00 },
+	{ V4L2_DV_BT_DMT_1024X768P85, 0x0f, 0x00 },
+	{ V4L2_DV_BT_DMT_1280X1024P60, 0x05, 0x00 },
+	{ V4L2_DV_BT_DMT_1280X1024P75, 0x06, 0x00 },
+	{ },
+};
+
 /* ----------------------------------------------------------------------- */
 
 static inline struct adv7604_state *to_state(struct v4l2_subdev *sd)
@@ -178,22 +262,22 @@ static inline struct v4l2_subdev *to_sd(struct v4l2_ctrl *ctrl)
 
 static inline unsigned hblanking(const struct v4l2_bt_timings *t)
 {
-	return t->hfrontporch + t->hsync + t->hbackporch;
+	return V4L2_DV_BT_BLANKING_WIDTH(t);
 }
 
 static inline unsigned htotal(const struct v4l2_bt_timings *t)
 {
-	return t->width + t->hfrontporch + t->hsync + t->hbackporch;
+	return V4L2_DV_BT_FRAME_WIDTH(t);
 }
 
 static inline unsigned vblanking(const struct v4l2_bt_timings *t)
 {
-	return t->vfrontporch + t->vsync + t->vbackporch;
+	return V4L2_DV_BT_BLANKING_HEIGHT(t);
 }
 
 static inline unsigned vtotal(const struct v4l2_bt_timings *t)
 {
-	return t->height + t->vfrontporch + t->vsync + t->vbackporch;
+	return V4L2_DV_BT_FRAME_HEIGHT(t);
 }
 
 /* ----------------------------------------------------------------------- */
@@ -403,9 +487,19 @@ static inline int edid_read_block(struct v4l2_subdev *sd, unsigned len, u8 *val)
 	struct i2c_client *client = state->i2c_edid;
 	u8 msgbuf0[1] = { 0 };
 	u8 msgbuf1[256];
-	struct i2c_msg msg[2] = { { client->addr, 0, 1, msgbuf0 },
-				  { client->addr, 0 | I2C_M_RD, len, msgbuf1 }
-				};
+	struct i2c_msg msg[2] = {
+		{
+			.addr = client->addr,
+			.len = 1,
+			.buf = msgbuf0
+		},
+		{
+			.addr = client->addr,
+			.flags = I2C_M_RD,
+			.len = len,
+			.buf = msgbuf1
+		},
+	};
 
 	if (i2c_transfer(client->adapter, msg, 2) < 0)
 		return -EIO;
@@ -550,12 +644,6 @@ static void adv7604_inv_register(struct v4l2_subdev *sd)
 static int adv7604_g_register(struct v4l2_subdev *sd,
 					struct v4l2_dbg_register *reg)
 {
-	struct i2c_client *client = v4l2_get_subdevdata(sd);
-
-	if (!v4l2_chip_match_i2c_client(client, &reg->match))
-		return -EINVAL;
-	if (!capable(CAP_SYS_ADMIN))
-		return -EPERM;
 	reg->size = 1;
 	switch (reg->reg >> 8) {
 	case 0:
@@ -606,14 +694,8 @@ static int adv7604_g_register(struct v4l2_subdev *sd,
 }
 
 static int adv7604_s_register(struct v4l2_subdev *sd,
-					struct v4l2_dbg_register *reg)
+					const struct v4l2_dbg_register *reg)
 {
-	struct i2c_client *client = v4l2_get_subdevdata(sd);
-
-	if (!v4l2_chip_match_i2c_client(client, &reg->match))
-		return -EINVAL;
-	if (!capable(CAP_SYS_ADMIN))
-		return -EPERM;
 	switch (reg->reg >> 8) {
 	case 0:
 		io_write(sd, reg->reg & 0xff, reg->val & 0xff);
@@ -672,64 +754,144 @@ static int adv7604_s_detect_tx_5v_ctrl(struct v4l2_subdev *sd)
 				((io_read(sd, 0x6f) & 0x10) >> 4));
 }
 
-static void configure_free_run(struct v4l2_subdev *sd, const struct v4l2_bt_timings *timings)
+static int find_and_set_predefined_video_timings(struct v4l2_subdev *sd,
+		u8 prim_mode,
+		const struct adv7604_video_standards *predef_vid_timings,
+		const struct v4l2_dv_timings *timings)
 {
+	struct adv7604_state *state = to_state(sd);
+	int i;
+
+	for (i = 0; predef_vid_timings[i].timings.bt.width; i++) {
+		if (!v4l2_match_dv_timings(timings, &predef_vid_timings[i].timings,
+					DIGITAL_INPUT ? 250000 : 1000000))
+			continue;
+		io_write(sd, 0x00, predef_vid_timings[i].vid_std); /* video std */
+		io_write(sd, 0x01, (predef_vid_timings[i].v_freq << 4) +
+				prim_mode); /* v_freq and prim mode */
+		return 0;
+	}
+
+	return -1;
+}
+
+static int configure_predefined_video_timings(struct v4l2_subdev *sd,
+		struct v4l2_dv_timings *timings)
+{
+	struct adv7604_state *state = to_state(sd);
+	int err;
+
+	v4l2_dbg(1, debug, sd, "%s", __func__);
+
+	/* reset to default values */
+	io_write(sd, 0x16, 0x43);
+	io_write(sd, 0x17, 0x5a);
+	/* disable embedded syncs for auto graphics mode */
+	cp_write_and_or(sd, 0x81, 0xef, 0x00);
+	cp_write(sd, 0x8f, 0x00);
+	cp_write(sd, 0x90, 0x00);
+	cp_write(sd, 0xa2, 0x00);
+	cp_write(sd, 0xa3, 0x00);
+	cp_write(sd, 0xa4, 0x00);
+	cp_write(sd, 0xa5, 0x00);
+	cp_write(sd, 0xa6, 0x00);
+	cp_write(sd, 0xa7, 0x00);
+	cp_write(sd, 0xab, 0x00);
+	cp_write(sd, 0xac, 0x00);
+
+	switch (state->mode) {
+	case ADV7604_MODE_COMP:
+	case ADV7604_MODE_GR:
+		err = find_and_set_predefined_video_timings(sd,
+				0x01, adv7604_prim_mode_comp, timings);
+		if (err)
+			err = find_and_set_predefined_video_timings(sd,
+					0x02, adv7604_prim_mode_gr, timings);
+		break;
+	case ADV7604_MODE_HDMI:
+		err = find_and_set_predefined_video_timings(sd,
+				0x05, adv7604_prim_mode_hdmi_comp, timings);
+		if (err)
+			err = find_and_set_predefined_video_timings(sd,
+					0x06, adv7604_prim_mode_hdmi_gr, timings);
+		break;
+	default:
+		v4l2_dbg(2, debug, sd, "%s: Unknown mode %d\n",
+				__func__, state->mode);
+		err = -1;
+		break;
+	}
+
+
+	return err;
+}
+
+static void configure_custom_video_timings(struct v4l2_subdev *sd,
+		const struct v4l2_bt_timings *bt)
+{
+	struct adv7604_state *state = to_state(sd);
 	struct i2c_client *client = v4l2_get_subdevdata(sd);
-	u32 width = htotal(timings);
-	u32 height = vtotal(timings);
-	u16 ch1_fr_ll = (((u32)timings->pixelclock / 100) > 0) ?
-		((width * (ADV7604_fsc / 100)) / ((u32)timings->pixelclock / 100)) : 0;
+	u32 width = htotal(bt);
+	u32 height = vtotal(bt);
+	u16 cp_start_sav = bt->hsync + bt->hbackporch - 4;
+	u16 cp_start_eav = width - bt->hfrontporch;
+	u16 cp_start_vbi = height - bt->vfrontporch;
+	u16 cp_end_vbi = bt->vsync + bt->vbackporch;
+	u16 ch1_fr_ll = (((u32)bt->pixelclock / 100) > 0) ?
+		((width * (ADV7604_fsc / 100)) / ((u32)bt->pixelclock / 100)) : 0;
+	const u8 pll[2] = {
+		0xc0 | ((width >> 8) & 0x1f),
+		width & 0xff
+	};
 
 	v4l2_dbg(2, debug, sd, "%s\n", __func__);
 
-	cp_write(sd, 0x8f, (ch1_fr_ll >> 8) & 0x7);	/* CH1_FR_LL */
-	cp_write(sd, 0x90, ch1_fr_ll & 0xff);		/* CH1_FR_LL */
-	cp_write(sd, 0xab, (height >> 4) & 0xff); /* CP_LCOUNT_MAX */
-	cp_write(sd, 0xac, (height & 0x0f) << 4); /* CP_LCOUNT_MAX */
-	/* TODO support interlaced */
-	cp_write(sd, 0x91, 0x10);	/* INTERLACED */
+	switch (state->mode) {
+	case ADV7604_MODE_COMP:
+	case ADV7604_MODE_GR:
+		/* auto graphics */
+		io_write(sd, 0x00, 0x07); /* video std */
+		io_write(sd, 0x01, 0x02); /* prim mode */
+		/* enable embedded syncs for auto graphics mode */
+		cp_write_and_or(sd, 0x81, 0xef, 0x10);
 
-	/* Should only be set in auto-graphics mode [REF_02 p. 91-92] */
-	if ((io_read(sd, 0x00) == 0x07) && (io_read(sd, 0x01) == 0x02)) {
-		u16 cp_start_sav, cp_start_eav, cp_start_vbi, cp_end_vbi;
-		const u8 pll[2] = {
-			(0xc0 | ((width >> 8) & 0x1f)),
-			(width & 0xff)
-		};
-
+		/* Should only be set in auto-graphics mode [REF_02, p. 91-92] */
 		/* setup PLL_DIV_MAN_EN and PLL_DIV_RATIO */
 		/* IO-map reg. 0x16 and 0x17 should be written in sequence */
 		if (adv_smbus_write_i2c_block_data(client, 0x16, 2, pll)) {
 			v4l2_err(sd, "writing to reg 0x16 and 0x17 failed\n");
-			return;
+			break;
 		}
 
 		/* active video - horizontal timing */
-		cp_start_sav = timings->hsync + timings->hbackporch - 4;
-		cp_start_eav = width - timings->hfrontporch;
 		cp_write(sd, 0xa2, (cp_start_sav >> 4) & 0xff);
-		cp_write(sd, 0xa3, ((cp_start_sav & 0x0f) << 4) | ((cp_start_eav >> 8) & 0x0f));
+		cp_write(sd, 0xa3, ((cp_start_sav & 0x0f) << 4) |
+					((cp_start_eav >> 8) & 0x0f));
 		cp_write(sd, 0xa4, cp_start_eav & 0xff);
 
 		/* active video - vertical timing */
-		cp_start_vbi = height - timings->vfrontporch;
-		cp_end_vbi = timings->vsync + timings->vbackporch;
 		cp_write(sd, 0xa5, (cp_start_vbi >> 4) & 0xff);
-		cp_write(sd, 0xa6, ((cp_start_vbi & 0xf) << 4) | ((cp_end_vbi >> 8) & 0xf));
+		cp_write(sd, 0xa6, ((cp_start_vbi & 0xf) << 4) |
+					((cp_end_vbi >> 8) & 0xf));
 		cp_write(sd, 0xa7, cp_end_vbi & 0xff);
-	} else {
-		/* reset to default values */
-		io_write(sd, 0x16, 0x43);
-		io_write(sd, 0x17, 0x5a);
-		cp_write(sd, 0xa2, 0x00);
-		cp_write(sd, 0xa3, 0x00);
-		cp_write(sd, 0xa4, 0x00);
-		cp_write(sd, 0xa5, 0x00);
-		cp_write(sd, 0xa6, 0x00);
-		cp_write(sd, 0xa7, 0x00);
+		break;
+	case ADV7604_MODE_HDMI:
+		/* set default prim_mode/vid_std for HDMI
+		   according to [REF_03, c. 4.2] */
+		io_write(sd, 0x00, 0x02); /* video std */
+		io_write(sd, 0x01, 0x06); /* prim mode */
+		break;
+	default:
+		v4l2_dbg(2, debug, sd, "%s: Unknown mode %d\n",
+				__func__, state->mode);
+		break;
 	}
-}
 
+	cp_write(sd, 0x8f, (ch1_fr_ll >> 8) & 0x7);
+	cp_write(sd, 0x90, ch1_fr_ll & 0xff);
+	cp_write(sd, 0xab, (height >> 4) & 0xff);
+	cp_write(sd, 0xac, (height & 0x0f) << 4);
+}
 
 static void set_rgb_quantization_range(struct v4l2_subdev *sd)
 {
@@ -738,12 +900,7 @@ static void set_rgb_quantization_range(struct v4l2_subdev *sd)
 	switch (state->rgb_quantization_range) {
 	case V4L2_DV_RGB_RANGE_AUTO:
 		/* automatic */
-		if ((hdmi_read(sd, 0x05) & 0x80) ||
-				(state->prim_mode == ADV7604_PRIM_MODE_COMP) ||
-				(state->prim_mode == ADV7604_PRIM_MODE_RGB)) {
-			/* receiving HDMI or analog signal */
-			io_write_and_or(sd, 0x02, 0x0f, 0xf0);
-		} else {
+		if (DIGITAL_INPUT && !(hdmi_read(sd, 0x05) & 0x80)) {
 			/* receiving DVI-D signal */
 
 			/* ADV7604 selects RGB limited range regardless of
@@ -756,6 +913,9 @@ static void set_rgb_quantization_range(struct v4l2_subdev *sd)
 				/* RGB full range (0-255) */
 				io_write_and_or(sd, 0x02, 0x0f, 0x10);
 			}
+		} else {
+			/* receiving HDMI or analog signal, set automode */
+			io_write_and_or(sd, 0x02, 0x0f, 0xf0);
 		}
 		break;
 	case V4L2_DV_RGB_RANGE_LIMITED:
@@ -813,14 +973,6 @@ static int adv7604_s_ctrl(struct v4l2_ctrl *ctrl)
 	return -EINVAL;
 }
 
-static int adv7604_g_chip_ident(struct v4l2_subdev *sd,
-					struct v4l2_dbg_chip_ident *chip)
-{
-	struct i2c_client *client = v4l2_get_subdevdata(sd);
-
-	return v4l2_chip_ident_i2c_client(client, chip, V4L2_IDENT_ADV7604, 0);
-}
-
 /* ----------------------------------------------------------------------- */
 
 static inline bool no_power(struct v4l2_subdev *sd)
@@ -838,6 +990,11 @@ static inline bool no_signal_tmds(struct v4l2_subdev *sd)
 static inline bool no_lock_tmds(struct v4l2_subdev *sd)
 {
 	return (io_read(sd, 0x6a) & 0xe0) != 0xe0;
+}
+
+static inline bool is_hdmi(struct v4l2_subdev *sd)
+{
+	return hdmi_read(sd, 0x05) & 0x80;
 }
 
 static inline bool no_lock_sspd(struct v4l2_subdev *sd)
@@ -894,38 +1051,6 @@ static int adv7604_g_input_status(struct v4l2_subdev *sd, u32 *status)
 
 /* ----------------------------------------------------------------------- */
 
-static void adv7604_print_timings(struct v4l2_subdev *sd,
-	struct v4l2_dv_timings *timings, const char *txt, bool detailed)
-{
-	struct v4l2_bt_timings *bt = &timings->bt;
-	u32 htot, vtot;
-
-	if (timings->type != V4L2_DV_BT_656_1120)
-		return;
-
-	htot = htotal(bt);
-	vtot = vtotal(bt);
-
-	v4l2_info(sd, "%s %dx%d%s%d (%dx%d)",
-			txt, bt->width, bt->height, bt->interlaced ? "i" : "p",
-			(htot * vtot) > 0 ? ((u32)bt->pixelclock /
-				(htot * vtot)) : 0,
-			htot, vtot);
-
-	if (detailed) {
-		v4l2_info(sd, "    horizontal: fp = %d, %ssync = %d, bp = %d\n",
-				bt->hfrontporch,
-				(bt->polarities & V4L2_DV_HSYNC_POS_POL) ? "+" : "-",
-				bt->hsync, bt->hbackporch);
-		v4l2_info(sd, "    vertical: fp = %d, %ssync = %d, bp = %d\n",
-				bt->vfrontporch,
-				(bt->polarities & V4L2_DV_VSYNC_POS_POL) ? "+" : "-",
-				bt->vsync, bt->vbackporch);
-		v4l2_info(sd, "    pixelclock: %lld, flags: 0x%x, standards: 0x%x\n",
-				bt->pixelclock, bt->flags, bt->standards);
-	}
-}
-
 struct stdi_readback {
 	u16 bl, lcf, lcvs;
 	u8 hs_pol, vs_pol;
@@ -967,8 +1092,10 @@ static int stdi2dv_timings(struct v4l2_subdev *sd,
 			state->aspect_ratio, timings))
 		return 0;
 
-	v4l2_dbg(2, debug, sd, "%s: No format candidate found for lcf=%d, bl = %d\n",
-			__func__, stdi->lcf, stdi->bl);
+	v4l2_dbg(2, debug, sd,
+		"%s: No format candidate found for lcvs = %d, lcf=%d, bl = %d, %chsync, %cvsync\n",
+		__func__, stdi->lcvs, stdi->lcf, stdi->bl,
+		stdi->hs_pol, stdi->vs_pol);
 	return -1;
 }
 
@@ -1035,7 +1162,7 @@ static int adv7604_dv_timings_cap(struct v4l2_subdev *sd,
 	cap->type = V4L2_DV_BT_656_1120;
 	cap->bt.max_width = 1920;
 	cap->bt.max_height = 1200;
-	cap->bt.min_pixelclock = 27000000;
+	cap->bt.min_pixelclock = 25000000;
 	if (DIGITAL_INPUT)
 		cap->bt.max_pixelclock = 225000000;
 	else
@@ -1056,7 +1183,7 @@ static void adv7604_fill_optional_dv_timings_fields(struct v4l2_subdev *sd,
 	int i;
 
 	for (i = 0; adv7604_timings[i].bt.width; i++) {
-		if (v4l_match_dv_timings(timings, &adv7604_timings[i],
+		if (v4l2_match_dv_timings(timings, &adv7604_timings[i],
 					DIGITAL_INPUT ? 250000 : 1000000)) {
 			*timings = adv7604_timings[i];
 			break;
@@ -1090,12 +1217,21 @@ static int adv7604_query_dv_timings(struct v4l2_subdev *sd,
 		V4L2_DV_INTERLACED : V4L2_DV_PROGRESSIVE;
 
 	if (DIGITAL_INPUT) {
+		uint32_t freq;
+
 		timings->type = V4L2_DV_BT_656_1120;
 
 		bt->width = (hdmi_read(sd, 0x07) & 0x0f) * 256 + hdmi_read(sd, 0x08);
 		bt->height = (hdmi_read(sd, 0x09) & 0x0f) * 256 + hdmi_read(sd, 0x0a);
-		bt->pixelclock = (hdmi_read(sd, 0x06) * 1000000) +
+		freq = (hdmi_read(sd, 0x06) * 1000000) +
 			((hdmi_read(sd, 0x3b) & 0x30) >> 4) * 250000;
+		if (is_hdmi(sd)) {
+			/* adjust for deep color mode */
+			unsigned bits_per_channel = ((hdmi_read(sd, 0x0b) & 0x60) >> 4) + 8;
+
+			freq = freq * 8 / bits_per_channel;
+		}
+		bt->pixelclock = freq;
 		bt->hfrontporch = (hdmi_read(sd, 0x20) & 0x03) * 256 +
 			hdmi_read(sd, 0x21);
 		bt->hsync = (hdmi_read(sd, 0x22) & 0x03) * 256 +
@@ -1123,7 +1259,7 @@ static int adv7604_query_dv_timings(struct v4l2_subdev *sd,
 		adv7604_fill_optional_dv_timings_fields(sd, timings);
 	} else {
 		/* find format
-		 * Since LCVS values are inaccurate (REF_03, page 275-276),
+		 * Since LCVS values are inaccurate [REF_03, p. 275-276],
 		 * stdi2dv_timings() is called with lcvs +-1 if the first attempt fails.
 		 */
 		if (!stdi2dv_timings(sd, &stdi, timings))
@@ -1135,9 +1271,31 @@ static int adv7604_query_dv_timings(struct v4l2_subdev *sd,
 		stdi.lcvs -= 2;
 		v4l2_dbg(1, debug, sd, "%s: lcvs - 1 = %d\n", __func__, stdi.lcvs);
 		if (stdi2dv_timings(sd, &stdi, timings)) {
+			/*
+			 * The STDI block may measure wrong values, especially
+			 * for lcvs and lcf. If the driver can not find any
+			 * valid timing, the STDI block is restarted to measure
+			 * the video timings again. The function will return an
+			 * error, but the restart of STDI will generate a new
+			 * STDI interrupt and the format detection process will
+			 * restart.
+			 */
+			if (state->restart_stdi_once) {
+				v4l2_dbg(1, debug, sd, "%s: restart STDI\n", __func__);
+				/* TODO restart STDI for Sync Channel 2 */
+				/* enter one-shot mode */
+				cp_write_and_or(sd, 0x86, 0xf9, 0x00);
+				/* trigger STDI restart */
+				cp_write_and_or(sd, 0x86, 0xf9, 0x04);
+				/* reset to continuous mode */
+				cp_write_and_or(sd, 0x86, 0xf9, 0x02);
+				state->restart_stdi_once = false;
+				return -ENOLINK;
+			}
 			v4l2_dbg(1, debug, sd, "%s: format not supported\n", __func__);
 			return -ERANGE;
 		}
+		state->restart_stdi_once = true;
 	}
 found:
 
@@ -1155,8 +1313,8 @@ found:
 	}
 
 	if (debug > 1)
-		adv7604_print_timings(sd, timings,
-				"adv7604_query_dv_timings:", true);
+		v4l2_print_dv_timings(sd->name, "adv7604_query_dv_timings: ",
+				      timings, true);
 
 	return 0;
 }
@@ -1166,6 +1324,7 @@ static int adv7604_s_dv_timings(struct v4l2_subdev *sd,
 {
 	struct adv7604_state *state = to_state(sd);
 	struct v4l2_bt_timings *bt;
+	int err;
 
 	if (!timings)
 		return -EINVAL;
@@ -1178,19 +1337,27 @@ static int adv7604_s_dv_timings(struct v4l2_subdev *sd,
 				__func__, (u32)bt->pixelclock);
 		return -ERANGE;
 	}
+
 	adv7604_fill_optional_dv_timings_fields(sd, timings);
 
 	state->timings = *timings;
 
-	/* freerun */
-	configure_free_run(sd, bt);
+	cp_write(sd, 0x91, bt->interlaced ? 0x50 : 0x10);
+
+	/* Use prim_mode and vid_std when available */
+	err = configure_predefined_video_timings(sd, timings);
+	if (err) {
+		/* custom settings when the video format
+		 does not have prim_mode/vid_std */
+		configure_custom_video_timings(sd, bt);
+	}
 
 	set_rgb_quantization_range(sd);
 
 
 	if (debug > 1)
-		adv7604_print_timings(sd, timings,
-				"adv7604_s_dv_timings:", true);
+		v4l2_print_dv_timings(sd->name, "adv7604_s_dv_timings: ",
+				      timings, true);
 	return 0;
 }
 
@@ -1203,24 +1370,25 @@ static int adv7604_g_dv_timings(struct v4l2_subdev *sd,
 	return 0;
 }
 
-static void enable_input(struct v4l2_subdev *sd, enum adv7604_prim_mode prim_mode)
+static void enable_input(struct v4l2_subdev *sd)
 {
-	switch (prim_mode) {
-	case ADV7604_PRIM_MODE_COMP:
-	case ADV7604_PRIM_MODE_RGB:
+	struct adv7604_state *state = to_state(sd);
+
+	switch (state->mode) {
+	case ADV7604_MODE_COMP:
+	case ADV7604_MODE_GR:
 		/* enable */
 		io_write(sd, 0x15, 0xb0);   /* Disable Tristate of Pins (no audio) */
 		break;
-	case ADV7604_PRIM_MODE_HDMI_COMP:
-	case ADV7604_PRIM_MODE_HDMI_GR:
+	case ADV7604_MODE_HDMI:
 		/* enable */
 		hdmi_write(sd, 0x1a, 0x0a); /* Unmute audio */
 		hdmi_write(sd, 0x01, 0x00); /* Enable HDMI clock terminators */
 		io_write(sd, 0x15, 0xa0);   /* Disable Tristate of Pins */
 		break;
 	default:
-		v4l2_err(sd, "%s: reserved primary mode 0x%0x\n",
-				__func__, prim_mode);
+		v4l2_dbg(2, debug, sd, "%s: Unknown mode %d\n",
+				__func__, state->mode);
 		break;
 	}
 }
@@ -1233,17 +1401,13 @@ static void disable_input(struct v4l2_subdev *sd)
 	hdmi_write(sd, 0x01, 0x78); /* Disable HDMI clock terminators */
 }
 
-static void select_input(struct v4l2_subdev *sd, enum adv7604_prim_mode prim_mode)
+static void select_input(struct v4l2_subdev *sd)
 {
-	switch (prim_mode) {
-	case ADV7604_PRIM_MODE_COMP:
-	case ADV7604_PRIM_MODE_RGB:
-		/* set mode and select free run resolution */
-		io_write(sd, 0x00, 0x07); /* video std */
-		io_write(sd, 0x01, 0x02); /* prim mode */
-		/* enable embedded syncs for auto graphics mode */
-		cp_write_and_or(sd, 0x81, 0xef, 0x10);
+	struct adv7604_state *state = to_state(sd);
 
+	switch (state->mode) {
+	case ADV7604_MODE_COMP:
+	case ADV7604_MODE_GR:
 		/* reset ADI recommended settings for HDMI: */
 		/* "ADV7604 Register Settings Recommendations (rev. 2.5, June 2010)" p. 4. */
 		hdmi_write(sd, 0x0d, 0x04); /* HDMI filter optimization */
@@ -1271,16 +1435,7 @@ static void select_input(struct v4l2_subdev *sd, enum adv7604_prim_mode prim_mod
 		cp_write(sd, 0x40, 0x5c); /* CP core pre-gain control. Graphics mode */
 		break;
 
-	case ADV7604_PRIM_MODE_HDMI_COMP:
-	case ADV7604_PRIM_MODE_HDMI_GR:
-		/* set mode and select free run resolution */
-		/* video std */
-		io_write(sd, 0x00,
-			(prim_mode == ADV7604_PRIM_MODE_HDMI_GR) ? 0x02 : 0x1e);
-		io_write(sd, 0x01, prim_mode); /* prim mode */
-		/* disable embedded syncs for auto graphics mode */
-		cp_write_and_or(sd, 0x81, 0xef, 0x00);
-
+	case ADV7604_MODE_HDMI:
 		/* set ADI recommended settings for HDMI: */
 		/* "ADV7604 Register Settings Recommendations (rev. 2.5, June 2010)" p. 4. */
 		hdmi_write(sd, 0x0d, 0x84); /* HDMI filter optimization */
@@ -1309,7 +1464,8 @@ static void select_input(struct v4l2_subdev *sd, enum adv7604_prim_mode prim_mod
 
 		break;
 	default:
-		v4l2_err(sd, "%s: reserved primary mode 0x%0x\n", __func__, prim_mode);
+		v4l2_dbg(2, debug, sd, "%s: Unknown mode %d\n",
+				__func__, state->mode);
 		break;
 	}
 }
@@ -1321,26 +1477,13 @@ static int adv7604_s_routing(struct v4l2_subdev *sd,
 
 	v4l2_dbg(2, debug, sd, "%s: input %d", __func__, input);
 
-	switch (input) {
-	case 0:
-		/* TODO select HDMI_COMP or HDMI_GR */
-		state->prim_mode = ADV7604_PRIM_MODE_HDMI_COMP;
-		break;
-	case 1:
-		state->prim_mode = ADV7604_PRIM_MODE_RGB;
-		break;
-	case 2:
-		state->prim_mode = ADV7604_PRIM_MODE_COMP;
-		break;
-	default:
-		return -EINVAL;
-	}
+	state->mode = input;
 
 	disable_input(sd);
 
-	select_input(sd, state->prim_mode);
+	select_input(sd);
 
-	enable_input(sd, state->prim_mode);
+	enable_input(sd);
 
 	return 0;
 }
@@ -1375,6 +1518,7 @@ static int adv7604_isr(struct v4l2_subdev *sd, u32 status, bool *handled)
 {
 	struct adv7604_state *state = to_state(sd);
 	u8 fmt_change, fmt_change_digital, tx_5v;
+	u32 input_status;
 
 	/* format change */
 	fmt_change = io_read(sd, 0x43) & 0x98;
@@ -1385,9 +1529,18 @@ static int adv7604_isr(struct v4l2_subdev *sd, u32 status, bool *handled)
 		io_write(sd, 0x6c, fmt_change_digital);
 	if (fmt_change || fmt_change_digital) {
 		v4l2_dbg(1, debug, sd,
-			"%s: ADV7604_FMT_CHANGE, fmt_change = 0x%x, fmt_change_digital = 0x%x\n",
+			"%s: fmt_change = 0x%x, fmt_change_digital = 0x%x\n",
 			__func__, fmt_change, fmt_change_digital);
-		v4l2_subdev_notify(sd, ADV7604_FMT_CHANGE, NULL);
+
+		adv7604_g_input_status(sd, &input_status);
+		if (input_status != state->prev_input_status) {
+			v4l2_dbg(1, debug, sd,
+				"%s: input_status = 0x%x, prev_input_status = 0x%x\n",
+				__func__, input_status, state->prev_input_status);
+			state->prev_input_status = input_status;
+			v4l2_subdev_notify(sd, ADV7604_FMT_CHANGE, NULL);
+		}
+
 		if (handled)
 			*handled = true;
 	}
@@ -1466,7 +1619,7 @@ static void print_avi_infoframe(struct v4l2_subdev *sd)
 	u8 avi_len;
 	u8 avi_ver;
 
-	if (!(hdmi_read(sd, 0x05) & 0x80)) {
+	if (!is_hdmi(sd)) {
 		v4l2_info(sd, "receive DVI-D signal (AVI infoframe not supported)\n");
 		return;
 	}
@@ -1527,6 +1680,12 @@ static int adv7604_log_status(struct v4l2_subdev *sd)
 		"RGB limited range (16-235)",
 		"RGB full range (0-255)",
 	};
+	char *deep_color_mode_txt[4] = {
+		"8-bits per channel",
+		"10-bits per channel",
+		"12-bits per channel",
+		"16-bits per channel (not supported)"
+	};
 
 	v4l2_info(sd, "-----Chip status-----\n");
 	v4l2_info(sd, "Chip power: %s\n", no_power(sd) ? "off" : "on");
@@ -1549,8 +1708,9 @@ static int adv7604_log_status(struct v4l2_subdev *sd)
 	v4l2_info(sd, "CP locked: %s\n", no_lock_cp(sd) ? "false" : "true");
 	v4l2_info(sd, "CP free run: %s\n",
 			(!!(cp_read(sd, 0xff) & 0x10) ? "on" : "off"));
-	v4l2_info(sd, "Prim-mode = 0x%x, video std = 0x%x\n",
-			io_read(sd, 0x01) & 0x0f, io_read(sd, 0x00) & 0x3f);
+	v4l2_info(sd, "Prim-mode = 0x%x, video std = 0x%x, v_freq = 0x%x\n",
+			io_read(sd, 0x01) & 0x0f, io_read(sd, 0x00) & 0x3f,
+			(io_read(sd, 0x01) & 0x70) >> 4);
 
 	v4l2_info(sd, "-----Video Timings-----\n");
 	if (read_stdi(sd, &stdi))
@@ -1563,8 +1723,13 @@ static int adv7604_log_status(struct v4l2_subdev *sd)
 	if (adv7604_query_dv_timings(sd, &timings))
 		v4l2_info(sd, "No video detected\n");
 	else
-		adv7604_print_timings(sd, &timings, "Detected format:", true);
-	adv7604_print_timings(sd, &state->timings, "Configured format:", true);
+		v4l2_print_dv_timings(sd->name, "Detected format: ",
+				      &timings, true);
+	v4l2_print_dv_timings(sd->name, "Configured format: ",
+			      &state->timings, true);
+
+	if (no_signal(sd))
+		return 0;
 
 	v4l2_info(sd, "-----Color space-----\n");
 	v4l2_info(sd, "RGB quantization range ctrl: %s\n",
@@ -1575,15 +1740,40 @@ static int adv7604_log_status(struct v4l2_subdev *sd)
 			(reg_io_0x02 & 0x02) ? "RGB" : "YCbCr",
 			(reg_io_0x02 & 0x04) ? "(16-235)" : "(0-255)",
 			((reg_io_0x02 & 0x04) ^ (reg_io_0x02 & 0x01)) ?
-					"enabled" : "disabled");
+				"enabled" : "disabled");
 	v4l2_info(sd, "Color space conversion: %s\n",
 			csc_coeff_sel_rb[cp_read(sd, 0xfc) >> 4]);
 
-	/* Digital video */
-	if (DIGITAL_INPUT) {
-		v4l2_info(sd, "-----HDMI status-----\n");
-		v4l2_info(sd, "HDCP encrypted content: %s\n",
-				hdmi_read(sd, 0x05) & 0x40 ? "true" : "false");
+	if (!DIGITAL_INPUT)
+		return 0;
+
+	v4l2_info(sd, "-----%s status-----\n", is_hdmi(sd) ? "HDMI" : "DVI-D");
+	v4l2_info(sd, "HDCP encrypted content: %s\n", (hdmi_read(sd, 0x05) & 0x40) ? "true" : "false");
+	v4l2_info(sd, "HDCP keys read: %s%s\n",
+			(hdmi_read(sd, 0x04) & 0x20) ? "yes" : "no",
+			(hdmi_read(sd, 0x04) & 0x10) ? "ERROR" : "");
+	if (!is_hdmi(sd)) {
+		bool audio_pll_locked = hdmi_read(sd, 0x04) & 0x01;
+		bool audio_sample_packet_detect = hdmi_read(sd, 0x18) & 0x01;
+		bool audio_mute = io_read(sd, 0x65) & 0x40;
+
+		v4l2_info(sd, "Audio: pll %s, samples %s, %s\n",
+				audio_pll_locked ? "locked" : "not locked",
+				audio_sample_packet_detect ? "detected" : "not detected",
+				audio_mute ? "muted" : "enabled");
+		if (audio_pll_locked && audio_sample_packet_detect) {
+			v4l2_info(sd, "Audio format: %s\n",
+					(hdmi_read(sd, 0x07) & 0x20) ? "multi-channel" : "stereo");
+		}
+		v4l2_info(sd, "Audio CTS: %u\n", (hdmi_read(sd, 0x5b) << 12) +
+				(hdmi_read(sd, 0x5c) << 8) +
+				(hdmi_read(sd, 0x5d) & 0xf0));
+		v4l2_info(sd, "Audio N: %u\n", ((hdmi_read(sd, 0x5d) & 0x0f) << 16) +
+				(hdmi_read(sd, 0x5e) << 8) +
+				hdmi_read(sd, 0x5f));
+		v4l2_info(sd, "AV Mute: %s\n", (hdmi_read(sd, 0x04) & 0x40) ? "on" : "off");
+
+		v4l2_info(sd, "Deep color mode: %s\n", deep_color_mode_txt[(hdmi_read(sd, 0x0b) & 0x60) >> 5]);
 
 		print_avi_infoframe(sd);
 	}
@@ -1606,7 +1796,6 @@ static const struct v4l2_subdev_core_ops adv7604_core_ops = {
 	.s_ctrl = v4l2_subdev_s_ctrl,
 	.queryctrl = v4l2_subdev_queryctrl,
 	.querymenu = v4l2_subdev_querymenu,
-	.g_chip_ident = adv7604_g_chip_ident,
 	.interrupt_service_routine = adv7604_isr,
 #ifdef CONFIG_VIDEO_ADV_DEBUG
 	.g_register = adv7604_g_register,
@@ -1712,9 +1901,9 @@ static int adv7604_core_init(struct v4l2_subdev *sd)
 	cp_write(sd, 0xba, (pdata->hdmi_free_run_mode << 1) | 0x01); /* HDMI free run */
 	cp_write(sd, 0xf3, 0xdc); /* Low threshold to enter/exit free run mode */
 	cp_write(sd, 0xf9, 0x23); /*  STDI ch. 1 - LCVS change threshold -
-				      ADI recommended setting [REF_01 c. 2.3.3] */
+				      ADI recommended setting [REF_01, c. 2.3.3] */
 	cp_write(sd, 0x45, 0x23); /*  STDI ch. 2 - LCVS change threshold -
-				      ADI recommended setting [REF_01 c. 2.3.3] */
+				      ADI recommended setting [REF_01, c. 2.3.3] */
 	cp_write(sd, 0xc9, 0x2d); /* use prim_mode and vid_std as free run resolution
 				     for digital formats */
 
@@ -1723,11 +1912,6 @@ static int adv7604_core_init(struct v4l2_subdev *sd)
 
 	afe_write(sd, 0x02, pdata->ain_sel); /* Select analog input muxing mode */
 	io_write_and_or(sd, 0x30, ~(1 << 4), pdata->output_bus_lsb_to_msb << 4);
-
-	state->prim_mode = pdata->prim_mode;
-	select_input(sd, pdata->prim_mode);
-
-	enable_input(sd, pdata->prim_mode);
 
 	/* interrupts */
 	io_write(sd, 0x40, 0xc2); /* Configure INT1 */
@@ -1792,17 +1976,20 @@ static int adv7604_probe(struct i2c_client *client,
 	v4l_dbg(1, debug, client, "detecting adv7604 client on address 0x%x\n",
 			client->addr << 1);
 
-	state = kzalloc(sizeof(struct adv7604_state), GFP_KERNEL);
+	state = devm_kzalloc(&client->dev, sizeof(*state), GFP_KERNEL);
 	if (!state) {
 		v4l_err(client, "Could not allocate adv7604_state memory!\n");
 		return -ENOMEM;
 	}
 
+	/* initialize variables */
+	state->restart_stdi_once = true;
+	state->prev_input_status = ~0;
+
 	/* platform data */
 	if (!pdata) {
 		v4l_err(client, "No platform data!\n");
-		err = -ENODEV;
-		goto err_state;
+		return -ENODEV;
 	}
 	memcpy(&state->pdata, pdata, sizeof(state->pdata));
 
@@ -1815,8 +2002,7 @@ static int adv7604_probe(struct i2c_client *client,
 	if (adv_smbus_read_byte_data_check(client, 0xfb, false) != 0x68) {
 		v4l2_info(sd, "not an adv7604 on address 0x%x\n",
 				client->addr << 1);
-		err = -ENODEV;
-		goto err_state;
+		return -ENODEV;
 	}
 
 	/* control handlers */
@@ -1835,29 +2021,30 @@ static int adv7604_probe(struct i2c_client *client,
 	/* private controls */
 	state->detect_tx_5v_ctrl = v4l2_ctrl_new_std(hdl, NULL,
 			V4L2_CID_DV_RX_POWER_PRESENT, 0, 1, 0, 0);
-	state->detect_tx_5v_ctrl->is_private = true;
 	state->rgb_quantization_range_ctrl =
 		v4l2_ctrl_new_std_menu(hdl, &adv7604_ctrl_ops,
 			V4L2_CID_DV_RX_RGB_RANGE, V4L2_DV_RGB_RANGE_FULL,
 			0, V4L2_DV_RGB_RANGE_AUTO);
-	state->rgb_quantization_range_ctrl->is_private = true;
 
 	/* custom controls */
 	state->analog_sampling_phase_ctrl =
 		v4l2_ctrl_new_custom(hdl, &adv7604_ctrl_analog_sampling_phase, NULL);
-	state->analog_sampling_phase_ctrl->is_private = true;
 	state->free_run_color_manual_ctrl =
 		v4l2_ctrl_new_custom(hdl, &adv7604_ctrl_free_run_color_manual, NULL);
-	state->free_run_color_manual_ctrl->is_private = true;
 	state->free_run_color_ctrl =
 		v4l2_ctrl_new_custom(hdl, &adv7604_ctrl_free_run_color, NULL);
-	state->free_run_color_ctrl->is_private = true;
 
 	sd->ctrl_handler = hdl;
 	if (hdl->error) {
 		err = hdl->error;
 		goto err_hdl;
 	}
+	state->detect_tx_5v_ctrl->is_private = true;
+	state->rgb_quantization_range_ctrl->is_private = true;
+	state->analog_sampling_phase_ctrl->is_private = true;
+	state->free_run_color_manual_ctrl->is_private = true;
+	state->free_run_color_ctrl->is_private = true;
+
 	if (adv7604_s_detect_tx_5v_ctrl(sd)) {
 		err = -ENODEV;
 		goto err_hdl;
@@ -1916,8 +2103,6 @@ err_i2c:
 	adv7604_unregister_clients(state);
 err_hdl:
 	v4l2_ctrl_handler_free(hdl);
-err_state:
-	kfree(state);
 	return err;
 }
 
@@ -1934,7 +2119,6 @@ static int adv7604_remove(struct i2c_client *client)
 	media_entity_cleanup(&sd->entity);
 	adv7604_unregister_clients(to_state(sd));
 	v4l2_ctrl_handler_free(sd->ctrl_handler);
-	kfree(to_state(sd));
 	return 0;
 }
 

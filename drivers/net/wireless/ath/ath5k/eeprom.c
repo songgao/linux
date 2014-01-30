@@ -1780,7 +1780,8 @@ ath5k_eeprom_detach(struct ath5k_hw *ah)
 }
 
 int
-ath5k_eeprom_mode_from_channel(struct ieee80211_channel *channel)
+ath5k_eeprom_mode_from_channel(struct ath5k_hw *ah,
+		struct ieee80211_channel *channel)
 {
 	switch (channel->hw_value) {
 	case AR5K_MODE_11A:
@@ -1791,6 +1792,7 @@ ath5k_eeprom_mode_from_channel(struct ieee80211_channel *channel)
 	case AR5K_MODE_11B:
 		return AR5K_EEPROM_MODE_11B;
 	default:
-		return -1;
+		ATH5K_WARN(ah, "channel is not A/B/G!");
+		return AR5K_EEPROM_MODE_11A;
 	}
 }

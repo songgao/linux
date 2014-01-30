@@ -148,12 +148,16 @@ static struct snd_soc_dai_driver psc_i2s_dai[] = {{
 	.ops = &psc_i2s_dai_ops,
 } };
 
+static const struct snd_soc_component_driver psc_i2s_component = {
+	.name		= "mpc5200-i2s",
+};
+
 /* ---------------------------------------------------------------------
  * OF platform bus binding code:
  * - Probe/remove operations
  * - OF device match table
  */
-static int __devinit psc_i2s_of_probe(struct platform_device *op)
+static int psc_i2s_of_probe(struct platform_device *op)
 {
 	int rc;
 	struct psc_dma *psc_dma;
@@ -163,7 +167,8 @@ static int __devinit psc_i2s_of_probe(struct platform_device *op)
 	if (rc != 0)
 		return rc;
 
-	rc = snd_soc_register_dais(&op->dev, psc_i2s_dai, ARRAY_SIZE(psc_i2s_dai));
+	rc = snd_soc_register_component(&op->dev, &psc_i2s_component,
+					psc_i2s_dai, ARRAY_SIZE(psc_i2s_dai));
 	if (rc != 0) {
 		pr_err("Failed to register DAI\n");
 		return rc;
@@ -205,15 +210,15 @@ static int __devinit psc_i2s_of_probe(struct platform_device *op)
 
 }
 
-static int __devexit psc_i2s_of_remove(struct platform_device *op)
+static int psc_i2s_of_remove(struct platform_device *op)
 {
 	mpc5200_audio_dma_destroy(op);
-	snd_soc_unregister_dais(&op->dev, ARRAY_SIZE(psc_i2s_dai));
+	snd_soc_unregister_component(&op->dev);
 	return 0;
 }
 
 /* Match table for of_platform binding */
-static struct of_device_id psc_i2s_match[] __devinitdata = {
+static struct of_device_id psc_i2s_match[] = {
 	{ .compatible = "fsl,mpc5200-psc-i2s", },
 	{ .compatible = "fsl,mpc5200b-psc-i2s", },
 	{}
@@ -222,7 +227,7 @@ MODULE_DEVICE_TABLE(of, psc_i2s_match);
 
 static struct platform_driver psc_i2s_driver = {
 	.probe = psc_i2s_of_probe,
-	.remove = __devexit_p(psc_i2s_of_remove),
+	.remove = psc_i2s_of_remove,
 	.driver = {
 		.name = "mpc5200-psc-i2s",
 		.owner = THIS_MODULE,

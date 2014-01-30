@@ -12,21 +12,23 @@
  * XXX handle crossbar/shared link difference for L3?
  * XXX these should be marked initdata for multi-OMAP kernels
  */
+
+#include <linux/i2c-omap.h>
 #include <linux/platform_data/asoc-ti-mcbsp.h>
 #include <linux/platform_data/spi-omap2-mcspi.h>
-
-#include <plat/omap_hwmod.h>
-#include <plat/dma.h>
-#include <plat/serial.h>
-#include <plat/i2c.h>
+#include <linux/omap-dma.h>
+#include <linux/platform_data/mailbox-omap.h>
 #include <plat/dmtimer.h>
-#include <plat/mmc.h>
+
+#include "omap_hwmod.h"
+#include "mmc.h"
 #include "l3_2xxx.h"
 
 #include "soc.h"
 #include "omap_hwmod_common_data.h"
 #include "prm-regbits-24xx.h"
 #include "cm-regbits-24xx.h"
+#include "i2c.h"
 #include "wd_timer.h"
 
 /*
@@ -76,8 +78,7 @@ static struct omap_hwmod_class i2c_class = {
 
 static struct omap_i2c_dev_attr i2c_dev_attr = {
 	.fifo_depth	= 8, /* bytes */
-	.flags		= OMAP_I2C_FLAG_APPLY_ERRATA_I207 |
-			  OMAP_I2C_FLAG_BUS_SHIFT_2 |
+	.flags		= OMAP_I2C_FLAG_BUS_SHIFT_2 |
 			  OMAP_I2C_FLAG_FORCE_19200_INT_CLK,
 };
 
@@ -170,6 +171,17 @@ static struct omap_hwmod omap2430_dma_system_hwmod = {
 };
 
 /* mailbox */
+static struct omap_mbox_dev_info omap2430_mailbox_info[] = {
+	{ .name = "dsp", .tx_id = 0, .rx_id = 1 },
+};
+
+static struct omap_mbox_pdata omap2430_mailbox_attrs = {
+	.num_users	= 4,
+	.num_fifos	= 6,
+	.info_cnt	= ARRAY_SIZE(omap2430_mailbox_info),
+	.info		= omap2430_mailbox_info,
+};
+
 static struct omap_hwmod_irq_info omap2430_mailbox_irqs[] = {
 	{ .irq = 26 + OMAP_INTC_START, },
 	{ .irq = -1 },
@@ -189,6 +201,7 @@ static struct omap_hwmod omap2430_mailbox_hwmod = {
 			.idlest_idle_bit = OMAP24XX_ST_MAILBOXES_SHIFT,
 		},
 	},
+	.dev_attr	= &omap2430_mailbox_attrs,
 };
 
 /* mcspi3 */
@@ -963,6 +976,8 @@ static struct omap_hwmod_ocp_if *omap2430_hwmod_ocp_ifs[] __initdata = {
 	&omap2430_l4_core__mcbsp5,
 	&omap2430_l4_core__hdq1w,
 	&omap2xxx_l4_core__rng,
+	&omap2xxx_l4_core__sham,
+	&omap2xxx_l4_core__aes,
 	&omap2430_l4_wkup__counter_32k,
 	&omap2430_l3__gpmc,
 	NULL,

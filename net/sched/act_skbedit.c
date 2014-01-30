@@ -67,8 +67,9 @@ static const struct nla_policy skbedit_policy[TCA_SKBEDIT_MAX + 1] = {
 	[TCA_SKBEDIT_MARK]		= { .len = sizeof(u32) },
 };
 
-static int tcf_skbedit_init(struct nlattr *nla, struct nlattr *est,
-			 struct tc_action *a, int ovr, int bind)
+static int tcf_skbedit_init(struct net *net, struct nlattr *nla,
+			    struct nlattr *est, struct tc_action *a,
+			    int ovr, int bind)
 {
 	struct nlattr *tb[TCA_SKBEDIT_MAX + 1];
 	struct tc_skbedit *parm;
@@ -119,10 +120,11 @@ static int tcf_skbedit_init(struct nlattr *nla, struct nlattr *est,
 		ret = ACT_P_CREATED;
 	} else {
 		d = to_skbedit(pc);
-		if (!ovr) {
-			tcf_hash_release(pc, bind, &skbedit_hash_info);
+		if (bind)
+			return 0;
+		tcf_hash_release(pc, bind, &skbedit_hash_info);
+		if (!ovr)
 			return -EEXIST;
-		}
 	}
 
 	spin_lock_bh(&d->tcf_lock);
@@ -202,7 +204,6 @@ static struct tc_action_ops act_skbedit_ops = {
 	.dump		=	tcf_skbedit_dump,
 	.cleanup	=	tcf_skbedit_cleanup,
 	.init		=	tcf_skbedit_init,
-	.walk		=	tcf_generic_walker,
 };
 
 MODULE_AUTHOR("Alexander Duyck, <alexander.h.duyck@intel.com>");

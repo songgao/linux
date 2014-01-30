@@ -44,34 +44,29 @@
 
 .globl system_call, buserr, trap, resume
 .globl sys_call_table
-.globl sys_fork, sys_clone, sys_vfork
-.globl ret_from_interrupt, bad_interrupt
+.globl __sys_fork, __sys_clone, __sys_vfork
+.globl bad_interrupt
 .globl auto_irqhandler_fixup
 .globl user_irqvec_fixup
 
 .text
-ENTRY(sys_fork)
+ENTRY(__sys_fork)
 	SAVE_SWITCH_STACK
-	pea	%sp@(SWITCH_STACK_SIZE)
-	jbsr	m68k_fork
-	addql	#4,%sp
-	RESTORE_SWITCH_STACK
+	jbsr	sys_fork
+	lea     %sp@(24),%sp
 	rts
 
-ENTRY(sys_clone)
+ENTRY(__sys_clone)
 	SAVE_SWITCH_STACK
 	pea	%sp@(SWITCH_STACK_SIZE)
 	jbsr	m68k_clone
-	addql	#4,%sp
-	RESTORE_SWITCH_STACK
+	lea     %sp@(28),%sp
 	rts
 
-ENTRY(sys_vfork)
+ENTRY(__sys_vfork)
 	SAVE_SWITCH_STACK
-	pea	%sp@(SWITCH_STACK_SIZE)
-	jbsr	m68k_vfork
-	addql	#4,%sp
-	RESTORE_SWITCH_STACK
+	jbsr	sys_vfork
+	lea     %sp@(24),%sp
 	rts
 
 ENTRY(sys_sigreturn)
@@ -115,16 +110,9 @@ ENTRY(ret_from_kernel_thread)
 	| a3 contains the kernel thread payload, d7 - its argument
 	movel	%d1,%sp@-
 	jsr	schedule_tail
-	GET_CURRENT(%d0)
 	movel	%d7,(%sp)
 	jsr	%a3@
 	addql	#4,%sp
-	movel	%d0,(%sp)
-	jra	sys_exit
-
-ENTRY(ret_from_kernel_execve)
-	movel	4(%sp), %sp
-	GET_CURRENT(%d0)
 	jra	ret_from_exception
 
 #if defined(CONFIG_COLDFIRE) || !defined(CONFIG_MMU)
@@ -287,8 +275,6 @@ do_delayed_trace:
 ENTRY(auto_inthandler)
 	SAVE_ALL_INT
 	GET_CURRENT(%d0)
-	movel	%d0,%a1
-	addqb	#1,%a1@(TINFO_PREEMPT+1)
 					|  put exception # in d0
 	bfextu	%sp@(PT_OFF_FORMATVEC){#4,#10},%d0
 	subw	#VEC_SPUR,%d0
@@ -298,32 +284,13 @@ ENTRY(auto_inthandler)
 auto_irqhandler_fixup = . + 2
 	jsr	do_IRQ			|  process the IRQ
 	addql	#8,%sp			|  pop parameters off stack
-
-ret_from_interrupt:
-	movel	%curptr@(TASK_STACK),%a1
-	subqb	#1,%a1@(TINFO_PREEMPT+1)
-	jeq	ret_from_last_interrupt
-2:	RESTORE_ALL
-
-	ALIGN
-ret_from_last_interrupt:
-	moveq	#(~ALLOWINT>>8)&0xff,%d0
-	andb	%sp@(PT_OFF_SR),%d0
-	jne	2b
-
-	/* check if we need to do software interrupts */
-	tstl	irq_stat+CPUSTAT_SOFTIRQ_PENDING
-	jeq	.Lret_from_exception
-	pea	ret_from_exception
-	jra	do_softirq
+	jra	ret_from_exception
 
 /* Handler for user defined interrupt vectors */
 
 ENTRY(user_inthandler)
 	SAVE_ALL_INT
 	GET_CURRENT(%d0)
-	movel	%d0,%a1
-	addqb	#1,%a1@(TINFO_PREEMPT+1)
 					|  put exception # in d0
 	bfextu	%sp@(PT_OFF_FORMATVEC){#4,#10},%d0
 user_irqvec_fixup = . + 2
@@ -333,29 +300,18 @@ user_irqvec_fixup = . + 2
 	movel	%d0,%sp@-		|  put vector # on stack
 	jsr	do_IRQ			|  process the IRQ
 	addql	#8,%sp			|  pop parameters off stack
-
-	movel	%curptr@(TASK_STACK),%a1
-	subqb	#1,%a1@(TINFO_PREEMPT+1)
-	jeq	ret_from_last_interrupt
-	RESTORE_ALL
+	jra	ret_from_exception
 
 /* Handler for uninitialized and spurious interrupts */
 
 ENTRY(bad_inthandler)
 	SAVE_ALL_INT
 	GET_CURRENT(%d0)
-	movel	%d0,%a1
-	addqb	#1,%a1@(TINFO_PREEMPT+1)
 
 	movel	%sp,%sp@-
 	jsr	handle_badint
 	addql	#4,%sp
-
-	movel	%curptr@(TASK_STACK),%a1
-	subqb	#1,%a1@(TINFO_PREEMPT+1)
-	jeq	ret_from_last_interrupt
-	RESTORE_ALL
-
+	jra	ret_from_exception
 
 resume:
 	/*

@@ -15,12 +15,15 @@ struct nouveau_mm {
 	struct list_head nodes;
 	struct list_head free;
 
-	struct mutex mutex;
-
 	u32 block_size;
 	int heap_nodes;
-	u32 heap_size;
 };
+
+static inline bool
+nouveau_mm_initialised(struct nouveau_mm *mm)
+{
+	return mm->block_size != 0;
+}
 
 int  nouveau_mm_init(struct nouveau_mm *, u32 offset, u32 length, u32 block);
 int  nouveau_mm_fini(struct nouveau_mm *);

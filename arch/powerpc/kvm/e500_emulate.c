@@ -26,6 +26,7 @@
 #define XOP_TLBRE   946
 #define XOP_TLBWE   978
 #define XOP_TLBILX  18
+#define XOP_EHPRIV  270
 
 #ifdef CONFIG_KVM_E500MC
 static int dbell2prio(ulong param)
@@ -82,13 +83,34 @@ static int kvmppc_e500_emul_msgsnd(struct kvm_vcpu *vcpu, int rb)
 }
 #endif
 
-int kvmppc_core_emulate_op(struct kvm_run *run, struct kvm_vcpu *vcpu,
-                           unsigned int inst, int *advance)
+static int kvmppc_e500_emul_ehpriv(struct kvm_run *run, struct kvm_vcpu *vcpu,
+				   unsigned int inst, int *advance)
+{
+	int emulated = EMULATE_DONE;
+
+	switch (get_oc(inst)) {
+	case EHPRIV_OC_DEBUG:
+		run->exit_reason = KVM_EXIT_DEBUG;
+		run->debug.arch.address = vcpu->arch.pc;
+		run->debug.arch.status = 0;
+		kvmppc_account_exit(vcpu, DEBUG_EXITS);
+		emulated = EMULATE_EXIT_USER;
+		*advance = 0;
+		break;
+	default:
+		emulated = EMULATE_FAIL;
+	}
+	return emulated;
+}
+
+int kvmppc_core_emulate_op_e500(struct kvm_run *run, struct kvm_vcpu *vcpu,
+				unsigned int inst, int *advance)
 {
 	int emulated = EMULATE_DONE;
 	int ra = get_ra(inst);
 	int rb = get_rb(inst);
 	int rt = get_rt(inst);
+	gva_t ea;
 
 	switch (get_op(inst)) {
 	case 31:
@@ -113,15 +135,25 @@ int kvmppc_core_emulate_op(struct kvm_run *run, struct kvm_vcpu *vcpu,
 			break;
 
 		case XOP_TLBSX:
-			emulated = kvmppc_e500_emul_tlbsx(vcpu,rb);
+			ea = kvmppc_get_ea_indexed(vcpu, ra, rb);
+			emulated = kvmppc_e500_emul_tlbsx(vcpu, ea);
 			break;
 
-		case XOP_TLBILX:
-			emulated = kvmppc_e500_emul_tlbilx(vcpu, rt, ra, rb);
+		case XOP_TLBILX: {
+			int type = rt & 0x3;
+			ea = kvmppc_get_ea_indexed(vcpu, ra, rb);
+			emulated = kvmppc_e500_emul_tlbilx(vcpu, type, ea);
 			break;
+		}
 
 		case XOP_TLBIVAX:
-			emulated = kvmppc_e500_emul_tlbivax(vcpu, ra, rb);
+			ea = kvmppc_get_ea_indexed(vcpu, ra, rb);
+			emulated = kvmppc_e500_emul_tlbivax(vcpu, ea);
+			break;
+
+		case XOP_EHPRIV:
+			emulated = kvmppc_e500_emul_ehpriv(run, vcpu, inst,
+							   advance);
 			break;
 
 		default:
@@ -140,7 +172,7 @@ int kvmppc_core_emulate_op(struct kvm_run *run, struct kvm_vcpu *vcpu,
 	return emulated;
 }
 
-int kvmppc_core_emulate_mtspr(struct kvm_vcpu *vcpu, int sprn, ulong spr_val)
+int kvmppc_core_emulate_mtspr_e500(struct kvm_vcpu *vcpu, int sprn, ulong spr_val)
 {
 	struct kvmppc_vcpu_e500 *vcpu_e500 = to_e500(vcpu);
 	int emulated = EMULATE_DONE;
@@ -231,7 +263,7 @@ int kvmppc_core_emulate_mtspr(struct kvm_vcpu *vcpu, int sprn, ulong spr_val)
 	return emulated;
 }
 
-int kvmppc_core_emulate_mfspr(struct kvm_vcpu *vcpu, int sprn, ulong *spr_val)
+int kvmppc_core_emulate_mfspr_e500(struct kvm_vcpu *vcpu, int sprn, ulong *spr_val)
 {
 	struct kvmppc_vcpu_e500 *vcpu_e500 = to_e500(vcpu);
 	int emulated = EMULATE_DONE;
@@ -278,6 +310,16 @@ int kvmppc_core_emulate_mfspr(struct kvm_vcpu *vcpu, int sprn, ulong *spr_val)
 	case SPRN_TLB1CFG:
 		*spr_val = vcpu->arch.tlbcfg[1];
 		break;
+	case SPRN_TLB0PS:
+		if (!has_feature(vcpu, VCPU_FTR_MMU_V2))
+			return EMULATE_FAIL;
+		*spr_val = vcpu->arch.tlbps[0];
+		break;
+	case SPRN_TLB1PS:
+		if (!has_feature(vcpu, VCPU_FTR_MMU_V2))
+			return EMULATE_FAIL;
+		*spr_val = vcpu->arch.tlbps[1];
+		break;
 	case SPRN_L1CSR0:
 		*spr_val = vcpu_e500->l1csr0;
 		break;
@@ -300,6 +342,15 @@ int kvmppc_core_emulate_mfspr(struct kvm_vcpu *vcpu, int sprn, ulong *spr_val)
 
 	case SPRN_MMUCFG:
 		*spr_val = vcpu->arch.mmucfg;
+		break;
+	case SPRN_EPTCFG:
+		if (!has_feature(vcpu, VCPU_FTR_MMU_V2))
+			return EMULATE_FAIL;
+		/*
+		 * Legacy Linux guests access EPTCFG register even if the E.PT
+		 * category is disabled in the VM. Give them a chance to live.
+		 */
+		*spr_val = vcpu->arch.eptcfg;
 		break;
 
 	/* extra exceptions */

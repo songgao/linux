@@ -42,7 +42,8 @@ static int eukrea_tlv320_hw_params(struct snd_pcm_substream *substream,
 				  SND_SOC_DAIFMT_NB_NF |
 				  SND_SOC_DAIFMT_CBM_CFM);
 	if (ret) {
-		pr_err("%s: failed set cpu dai format\n", __func__);
+		dev_err(cpu_dai->dev,
+			"Failed to set the cpu dai format.\n");
 		return ret;
 	}
 
@@ -50,14 +51,16 @@ static int eukrea_tlv320_hw_params(struct snd_pcm_substream *substream,
 				  SND_SOC_DAIFMT_NB_NF |
 				  SND_SOC_DAIFMT_CBM_CFM);
 	if (ret) {
-		pr_err("%s: failed set codec dai format\n", __func__);
+		dev_err(cpu_dai->dev,
+			"Failed to set the codec format.\n");
 		return ret;
 	}
 
 	ret = snd_soc_dai_set_sysclk(codec_dai, 0,
 				     CODEC_CLOCK, SND_SOC_CLOCK_OUT);
 	if (ret) {
-		pr_err("%s: failed setting codec sysclk\n", __func__);
+		dev_err(cpu_dai->dev,
+			"Failed to set the codec sysclk.\n");
 		return ret;
 	}
 	snd_soc_dai_set_tdm_slot(cpu_dai, 0xffffffc, 0xffffffc, 2, 0);
@@ -65,7 +68,8 @@ static int eukrea_tlv320_hw_params(struct snd_pcm_substream *substream,
 	ret = snd_soc_dai_set_sysclk(cpu_dai, IMX_SSP_SYS_CLK, 0,
 				SND_SOC_CLOCK_IN);
 	if (ret) {
-		pr_err("can't set CPU system clock IMX_SSP_SYS_CLK\n");
+		dev_err(cpu_dai->dev,
+			"Can't set the IMX_SSP_SYS_CLK CPU system clock.\n");
 		return ret;
 	}
 
@@ -80,7 +84,7 @@ static struct snd_soc_dai_link eukrea_tlv320_dai = {
 	.name		= "tlv320aic23",
 	.stream_name	= "TLV320AIC23",
 	.codec_dai_name	= "tlv320aic23-hifi",
-	.platform_name	= "imx-fiq-pcm-audio.0",
+	.platform_name	= "imx-ssi.0",
 	.codec_name	= "tlv320aic23-codec.0-001a",
 	.cpu_dai_name	= "imx-ssi.0",
 	.ops		= &eukrea_tlv320_snd_ops,
@@ -93,7 +97,7 @@ static struct snd_soc_card eukrea_tlv320 = {
 	.num_links	= 1,
 };
 
-static int __devinit eukrea_tlv320_probe(struct platform_device *pdev)
+static int eukrea_tlv320_probe(struct platform_device *pdev)
 {
 	int ret;
 	int int_port = 0, ext_port;
@@ -142,7 +146,7 @@ static int __devinit eukrea_tlv320_probe(struct platform_device *pdev)
 	return ret;
 }
 
-static int __devexit eukrea_tlv320_remove(struct platform_device *pdev)
+static int eukrea_tlv320_remove(struct platform_device *pdev)
 {
 	snd_soc_unregister_card(&eukrea_tlv320);
 
@@ -155,7 +159,8 @@ static struct platform_driver eukrea_tlv320_driver = {
 		.owner = THIS_MODULE,
 	},
 	.probe = eukrea_tlv320_probe,
-	.remove = __devexit_p(eukrea_tlv320_remove),};
+	.remove = eukrea_tlv320_remove,
+};
 
 module_platform_driver(eukrea_tlv320_driver);
 

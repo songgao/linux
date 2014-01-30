@@ -28,6 +28,7 @@
 #include <linux/kernel.h>
 #include <linux/string.h>
 #include <linux/ioport.h>
+#include <linux/of_address.h>
 #include <linux/of_platform.h>
 #include <linux/platform_device.h>
 #include <linux/slab.h>
@@ -106,20 +107,6 @@ static struct nand_ecclayout fsl_elbc_oob_lp_eccm1 = {
 	.eccbytes = 12,
 	.eccpos = {8, 9, 10, 24, 25, 26, 40, 41, 42, 56, 57, 58},
 	.oobfree = { {1, 7}, {11, 13}, {27, 13}, {43, 13}, {59, 5} },
-};
-
-/*
- * fsl_elbc_oob_lp_eccm* specify that LP NAND's OOB free area starts at offset
- * 1, so we have to adjust bad block pattern. This pattern should be used for
- * x8 chips only. So far hardware does not support x16 chips anyway.
- */
-static u8 scan_ff_pattern[] = { 0xff, };
-
-static struct nand_bbt_descr largepage_memorybased = {
-	.options = 0,
-	.offs = 0,
-	.len = 1,
-	.pattern = scan_ff_pattern,
 };
 
 /*
@@ -664,8 +651,6 @@ static int fsl_elbc_chip_init_tail(struct mtd_info *mtd)
 	        chip->page_shift);
 	dev_dbg(priv->dev, "fsl_elbc_init: nand->phys_erase_shift = %d\n",
 	        chip->phys_erase_shift);
-	dev_dbg(priv->dev, "fsl_elbc_init: nand->ecclayout = %p\n",
-	        chip->ecclayout);
 	dev_dbg(priv->dev, "fsl_elbc_init: nand->ecc.mode = %d\n",
 	        chip->ecc.mode);
 	dev_dbg(priv->dev, "fsl_elbc_init: nand->ecc.steps = %d\n",
@@ -699,7 +684,6 @@ static int fsl_elbc_chip_init_tail(struct mtd_info *mtd)
 			chip->ecc.layout = (priv->fmr & FMR_ECCM) ?
 			                   &fsl_elbc_oob_lp_eccm1 :
 			                   &fsl_elbc_oob_lp_eccm0;
-			chip->badblock_pattern = &largepage_memorybased;
 		}
 	} else {
 		dev_err(priv->dev,
@@ -814,7 +798,7 @@ static int fsl_elbc_chip_remove(struct fsl_elbc_mtd *priv)
 
 static DEFINE_MUTEX(fsl_elbc_nand_mutex);
 
-static int __devinit fsl_elbc_nand_probe(struct platform_device *pdev)
+static int fsl_elbc_nand_probe(struct platform_device *pdev)
 {
 	struct fsl_lbc_regs __iomem *lbc;
 	struct fsl_elbc_mtd *priv;

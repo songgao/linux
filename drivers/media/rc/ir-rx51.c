@@ -28,7 +28,6 @@
 
 #include <plat/dmtimer.h>
 #include <plat/clock.h>
-#include <plat/omap-pm.h>
 
 #include <media/lirc.h>
 #include <media/lirc_dev.h>
@@ -202,8 +201,7 @@ static int lirc_rx51_init_port(struct lirc_rx51 *lirc_rx51)
 
 	lirc_rx51->irq_num = omap_dm_timer_get_irq(lirc_rx51->pulse_timer);
 	retval = request_irq(lirc_rx51->irq_num, lirc_rx51_interrupt_handler,
-			     IRQF_DISABLED | IRQF_SHARED,
-			     "lirc_pulse_timer", lirc_rx51);
+			     IRQF_SHARED, "lirc_pulse_timer", lirc_rx51);
 	if (retval) {
 		dev_err(lirc_rx51->dev, ": Failed to request interrupt line\n");
 		goto err2;
@@ -444,7 +442,7 @@ static int lirc_rx51_resume(struct platform_device *dev)
 
 #endif /* CONFIG_PM */
 
-static int __devinit lirc_rx51_probe(struct platform_device *dev)
+static int lirc_rx51_probe(struct platform_device *dev)
 {
 	lirc_rx51_driver.features = LIRC_RX51_DRIVER_FEATURES;
 	lirc_rx51.pdata = dev->dev.platform_data;
@@ -465,14 +463,14 @@ static int __devinit lirc_rx51_probe(struct platform_device *dev)
 	return 0;
 }
 
-static int __exit lirc_rx51_remove(struct platform_device *dev)
+static int lirc_rx51_remove(struct platform_device *dev)
 {
 	return lirc_unregister_driver(lirc_rx51_driver.minor);
 }
 
 struct platform_driver lirc_rx51_platform_driver = {
 	.probe		= lirc_rx51_probe,
-	.remove		= __exit_p(lirc_rx51_remove),
+	.remove		= lirc_rx51_remove,
 	.suspend	= lirc_rx51_suspend,
 	.resume		= lirc_rx51_resume,
 	.driver		= {
@@ -480,18 +478,7 @@ struct platform_driver lirc_rx51_platform_driver = {
 		.owner	= THIS_MODULE,
 	},
 };
-
-static int __init lirc_rx51_init(void)
-{
-	return platform_driver_register(&lirc_rx51_platform_driver);
-}
-module_init(lirc_rx51_init);
-
-static void __exit lirc_rx51_exit(void)
-{
-	platform_driver_unregister(&lirc_rx51_platform_driver);
-}
-module_exit(lirc_rx51_exit);
+module_platform_driver(lirc_rx51_platform_driver);
 
 MODULE_DESCRIPTION("LIRC TX driver for Nokia RX51");
 MODULE_AUTHOR("Nokia Corporation");

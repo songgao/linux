@@ -82,19 +82,8 @@ void *__switch_to(struct task_struct *from, struct task_struct *to)
 	to->thread.prev_sched = from;
 	set_current(to);
 
-	do {
-		current->thread.saved_task = NULL;
-
-		switch_threads(&from->thread.switch_buf,
-			       &to->thread.switch_buf);
-
-		arch_switch_to(current);
-
-		if (current->thread.saved_task)
-			show_regs(&(current->thread.regs));
-		to = current->thread.saved_task;
-		from = current;
-	} while (current->thread.saved_task);
+	switch_threads(&from->thread.switch_buf, &to->thread.switch_buf);
+	arch_switch_to(current);
 
 	return current->thread.prev_sched;
 }
@@ -161,8 +150,7 @@ void fork_handler(void)
 }
 
 int copy_thread(unsigned long clone_flags, unsigned long sp,
-		unsigned long arg, struct task_struct * p,
-		struct pt_regs *regs)
+		unsigned long arg, struct task_struct * p)
 {
 	void (*handler)(void);
 	int kthread = current->flags & PF_KTHREAD;
@@ -171,7 +159,7 @@ int copy_thread(unsigned long clone_flags, unsigned long sp,
 	p->thread = (struct thread_struct) INIT_THREAD;
 
 	if (!kthread) {
-	  	memcpy(&p->thread.regs.regs, &regs->regs,
+	  	memcpy(&p->thread.regs.regs, current_pt_regs(),
 		       sizeof(p->thread.regs.regs));
 		PT_REGS_SET_SYSCALL_RETURN(&p->thread.regs, 0);
 		if (sp != 0)
@@ -211,33 +199,14 @@ void initial_thread_cb(void (*proc)(void *), void *arg)
 	kmalloc_ok = save_kmalloc_ok;
 }
 
-void default_idle(void)
+void arch_cpu_idle(void)
 {
 	unsigned long long nsecs;
 
-	while (1) {
-		/* endless idle loop with no priority at all */
-
-		/*
-		 * although we are an idle CPU, we do not want to
-		 * get into the scheduler unnecessarily.
-		 */
-		if (need_resched())
-			schedule();
-
-		tick_nohz_idle_enter();
-		rcu_idle_enter();
-		nsecs = disable_timer();
-		idle_sleep(nsecs);
-		rcu_idle_exit();
-		tick_nohz_idle_exit();
-	}
-}
-
-void cpu_idle(void)
-{
 	cpu_tasks[current_thread_info()->cpu].pid = os_getpid();
-	default_idle();
+	nsecs = disable_timer();
+	idle_sleep(nsecs);
+	local_irq_enable();
 }
 
 int __cant_sleep(void) {

@@ -72,7 +72,7 @@ int pow_receive_group = 15;
 module_param(pow_receive_group, int, 0444);
 MODULE_PARM_DESC(pow_receive_group, "\n"
 	"\tPOW group to receive packets from. All ethernet hardware\n"
-	"\twill be configured to send incomming packets to this POW\n"
+	"\twill be configured to send incoming packets to this POW\n"
 	"\tgroup. Also any other software can submit packets to this\n"
 	"\tgroup for the kernel to process.");
 
@@ -163,13 +163,15 @@ static void cvm_oct_periodic_worker(struct work_struct *work)
 	if (priv->poll)
 		priv->poll(cvm_oct_device[priv->port]);
 
-	cvm_oct_device[priv->port]->netdev_ops->ndo_get_stats(cvm_oct_device[priv->port]);
+	cvm_oct_device[priv->port]->netdev_ops->ndo_get_stats(
+						cvm_oct_device[priv->port]);
 
 	if (!atomic_read(&cvm_oct_poll_queue_stopping))
-		queue_delayed_work(cvm_oct_poll_queue, &priv->port_periodic_work, HZ);
- }
+		queue_delayed_work(cvm_oct_poll_queue,
+						&priv->port_periodic_work, HZ);
+}
 
-static __devinit void cvm_oct_configure_common_hw(void)
+static void cvm_oct_configure_common_hw(void)
 {
 	/* Setup the FPA */
 	cvmx_fpa_enable();
@@ -453,12 +455,10 @@ int cvm_oct_common_init(struct net_device *dev)
 	if (priv->of_node)
 		mac = of_get_mac_address(priv->of_node);
 
-	if (mac && is_valid_ether_addr(mac)) {
+	if (mac)
 		memcpy(dev->dev_addr, mac, ETH_ALEN);
-		dev->addr_assign_type &= ~NET_ADDR_RANDOM;
-	} else {
+	else
 		eth_hw_addr_random(dev);
-	}
 
 	/*
 	 * Force the interface to use the POW send if always_use_pow
@@ -586,8 +586,8 @@ static const struct net_device_ops cvm_oct_pow_netdev_ops = {
 
 extern void octeon_mdiobus_force_mod_depencency(void);
 
-static struct device_node * __devinit cvm_oct_of_get_child(const struct device_node *parent,
-							   int reg_val)
+static struct device_node *cvm_oct_of_get_child(
+				const struct device_node *parent, int reg_val)
 {
 	struct device_node *node = NULL;
 	int size;
@@ -604,8 +604,8 @@ static struct device_node * __devinit cvm_oct_of_get_child(const struct device_n
 	return node;
 }
 
-static struct device_node * __devinit cvm_oct_node_for_port(struct device_node *pip,
-							    int interface, int port)
+static struct device_node *cvm_oct_node_for_port(struct device_node *pip,
+							int interface, int port)
 {
 	struct device_node *ni, *np;
 
@@ -619,7 +619,7 @@ static struct device_node * __devinit cvm_oct_node_for_port(struct device_node *
 	return np;
 }
 
-static int __devinit cvm_oct_probe(struct platform_device *pdev)
+static int cvm_oct_probe(struct platform_device *pdev)
 {
 	int num_interfaces;
 	int interface;
@@ -715,7 +715,8 @@ static int __devinit cvm_oct_probe(struct platform_device *pdev)
 		int port;
 		int port_index;
 
-		for (port_index = 0, port = cvmx_helper_get_ipd_port(interface, 0);
+		for (port_index = 0,
+		     port = cvmx_helper_get_ipd_port(interface, 0);
 		     port < cvmx_helper_get_ipd_port(interface, num_ports);
 		     port_index++, port++) {
 			struct octeon_ethernet *priv;
@@ -728,7 +729,8 @@ static int __devinit cvm_oct_probe(struct platform_device *pdev)
 
 			/* Initialize the device private structure. */
 			priv = netdev_priv(dev);
-			priv->of_node = cvm_oct_node_for_port(pip, interface, port_index);
+			priv->of_node = cvm_oct_node_for_port(pip, interface,
+								port_index);
 
 			INIT_DELAYED_WORK(&priv->port_periodic_work,
 					  cvm_oct_periodic_worker);
@@ -795,7 +797,7 @@ static int __devinit cvm_oct_probe(struct platform_device *pdev)
 				    cvmx_pko_get_num_queues(priv->port) *
 				    sizeof(uint32_t);
 				queue_delayed_work(cvm_oct_poll_queue,
-						   &priv->port_periodic_work, HZ);
+						&priv->port_periodic_work, HZ);
 			}
 		}
 	}
@@ -813,7 +815,7 @@ static int __devinit cvm_oct_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static int __devexit cvm_oct_remove(struct platform_device *pdev)
+static int cvm_oct_remove(struct platform_device *pdev)
 {
 	int port;
 
@@ -874,7 +876,7 @@ MODULE_DEVICE_TABLE(of, cvm_oct_match);
 
 static struct platform_driver cvm_oct_driver = {
 	.probe		= cvm_oct_probe,
-	.remove		= __devexit_p(cvm_oct_remove),
+	.remove		= cvm_oct_remove,
 	.driver		= {
 		.owner	= THIS_MODULE,
 		.name	= KBUILD_MODNAME,

@@ -14,6 +14,7 @@
 
 #include <linux/module.h>
 #include <linux/moduleparam.h>
+#include <linux/interrupt.h>
 #include <linux/irqreturn.h>
 #include <linux/init.h>
 #include <linux/spi/spi.h>
@@ -31,6 +32,9 @@
 
 #define DEVICE_ID_WM0010	10
 
+/* We only support v1 of the .dfw INFO record */
+#define INFO_VERSION		1
+
 enum dfw_cmd {
 	DFW_CMD_FUSE = 0x01,
 	DFW_CMD_CODE_HDR,
@@ -45,6 +49,13 @@ struct dfw_binrec {
 	u32 address;
 	uint8_t data[0];
 } __packed;
+
+struct dfw_inforec {
+	u8 info_version;
+	u8 tool_major_version;
+	u8 tool_minor_version;
+	u8 dsp_target;
+};
 
 struct dfw_pllrec {
 	u8 command;
@@ -97,7 +108,6 @@ struct wm0010_priv {
 
 	enum wm0010_state state;
 	bool boot_failed;
-	int boot_done;
 	bool ready;
 	bool pll_running;
 	int max_spi_freq;
@@ -234,7 +244,7 @@ static void wm0010_boot_xfer_complete(void *data)
 			break;
 
 		case 0x55555555:
-			if (wm0010->boot_done == 0)
+			if (wm0010->state < WM0010_STAGE2)
 				break;
 			dev_err(codec->dev,
 				"%d: ROM bootloader running in stage 2\n", i);
@@ -321,7 +331,6 @@ static void wm0010_boot_xfer_complete(void *data)
 			break;
 	}
 
-	wm0010->boot_done++;
 	if (xfer->done)
 		complete(xfer->done);
 }
@@ -334,24 +343,254 @@ static void byte_swap_64(u64 *data_in, u64 *data_out, u32 len)
 		data_out[i] = cpu_to_be64(le64_to_cpu(data_in[i]));
 }
 
-static int wm0010_boot(struct snd_soc_codec *codec)
+static int wm0010_firmware_load(const char *name, struct snd_soc_codec *codec)
 {
 	struct spi_device *spi = to_spi_device(codec->dev);
 	struct wm0010_priv *wm0010 = snd_soc_codec_get_drvdata(codec);
-	unsigned long flags;
 	struct list_head xfer_list;
 	struct wm0010_boot_xfer *xfer;
 	int ret;
 	struct completion done;
 	const struct firmware *fw;
 	const struct dfw_binrec *rec;
+	const struct dfw_inforec *inforec;
+	u64 *img;
+	u8 *out, dsp;
+	u32 len, offset;
+
+	INIT_LIST_HEAD(&xfer_list);
+
+	ret = request_firmware(&fw, name, codec->dev);
+	if (ret != 0) {
+		dev_err(codec->dev, "Failed to request application(%s): %d\n",
+			name, ret);
+		return ret;
+	}
+
+	rec = (const struct dfw_binrec *)fw->data;
+	inforec = (const struct dfw_inforec *)rec->data;
+	offset = 0;
+	dsp = inforec->dsp_target;
+	wm0010->boot_failed = false;
+	if (WARN_ON(!list_empty(&xfer_list)))
+		return -EINVAL;
+	init_completion(&done);
+
+	/* First record should be INFO */
+	if (rec->command != DFW_CMD_INFO) {
+		dev_err(codec->dev, "First record not INFO\r\n");
+		ret = -EINVAL;
+		goto abort;
+	}
+
+	if (inforec->info_version != INFO_VERSION) {
+		dev_err(codec->dev,
+			"Unsupported version (%02d) of INFO record\r\n",
+			inforec->info_version);
+		ret = -EINVAL;
+		goto abort;
+	}
+
+	dev_dbg(codec->dev, "Version v%02d INFO record found\r\n",
+		inforec->info_version);
+
+	/* Check it's a DSP file */
+	if (dsp != DEVICE_ID_WM0010) {
+		dev_err(codec->dev, "Not a WM0010 firmware file.\r\n");
+		ret = -EINVAL;
+		goto abort;
+	}
+
+	/* Skip the info record as we don't need to send it */
+	offset += ((rec->length) + 8);
+	rec = (void *)&rec->data[rec->length];
+
+	while (offset < fw->size) {
+		dev_dbg(codec->dev,
+			"Packet: command %d, data length = 0x%x\r\n",
+			rec->command, rec->length);
+		len = rec->length + 8;
+
+		xfer = kzalloc(sizeof(*xfer), GFP_KERNEL);
+		if (!xfer) {
+			dev_err(codec->dev, "Failed to allocate xfer\n");
+			ret = -ENOMEM;
+			goto abort;
+		}
+
+		xfer->codec = codec;
+		list_add_tail(&xfer->list, &xfer_list);
+
+		out = kzalloc(len, GFP_KERNEL | GFP_DMA);
+		if (!out) {
+			dev_err(codec->dev,
+				"Failed to allocate RX buffer\n");
+			ret = -ENOMEM;
+			goto abort1;
+		}
+		xfer->t.rx_buf = out;
+
+		img = kzalloc(len, GFP_KERNEL | GFP_DMA);
+		if (!img) {
+			dev_err(codec->dev,
+				"Failed to allocate image buffer\n");
+			ret = -ENOMEM;
+			goto abort1;
+		}
+		xfer->t.tx_buf = img;
+
+		byte_swap_64((u64 *)&rec->command, img, len);
+
+		spi_message_init(&xfer->m);
+		xfer->m.complete = wm0010_boot_xfer_complete;
+		xfer->m.context = xfer;
+		xfer->t.len = len;
+		xfer->t.bits_per_word = 8;
+
+		if (!wm0010->pll_running) {
+			xfer->t.speed_hz = wm0010->sysclk / 6;
+		} else {
+			xfer->t.speed_hz = wm0010->max_spi_freq;
+
+			if (wm0010->board_max_spi_speed &&
+			   (wm0010->board_max_spi_speed < wm0010->max_spi_freq))
+					xfer->t.speed_hz = wm0010->board_max_spi_speed;
+		}
+
+		/* Store max usable spi frequency for later use */
+		wm0010->max_spi_freq = xfer->t.speed_hz;
+
+		spi_message_add_tail(&xfer->t, &xfer->m);
+
+		offset += ((rec->length) + 8);
+		rec = (void *)&rec->data[rec->length];
+
+		if (offset >= fw->size) {
+			dev_dbg(codec->dev, "All transfers scheduled\n");
+			xfer->done = &done;
+		}
+
+		ret = spi_async(spi, &xfer->m);
+		if (ret != 0) {
+			dev_err(codec->dev, "Write failed: %d\n", ret);
+			goto abort1;
+		}
+
+		if (wm0010->boot_failed) {
+			dev_dbg(codec->dev, "Boot fail!\n");
+			ret = -EINVAL;
+			goto abort1;
+		}
+	}
+
+	wait_for_completion(&done);
+
+	ret = 0;
+
+abort1:
+	while (!list_empty(&xfer_list)) {
+		xfer = list_first_entry(&xfer_list, struct wm0010_boot_xfer,
+					list);
+		kfree(xfer->t.rx_buf);
+		kfree(xfer->t.tx_buf);
+		list_del(&xfer->list);
+		kfree(xfer);
+	}
+
+abort:
+	release_firmware(fw);
+	return ret;
+}
+
+static int wm0010_stage2_load(struct snd_soc_codec *codec)
+{
+	struct spi_device *spi = to_spi_device(codec->dev);
+	struct wm0010_priv *wm0010 = snd_soc_codec_get_drvdata(codec);
+	const struct firmware *fw;
+	struct spi_message m;
+	struct spi_transfer t;
+	u32 *img;
+	u8 *out;
+	int i;
+	int ret = 0;
+
+	ret = request_firmware(&fw, "wm0010_stage2.bin", codec->dev);
+	if (ret != 0) {
+		dev_err(codec->dev, "Failed to request stage2 loader: %d\n",
+			ret);
+		return ret;
+	}
+
+	dev_dbg(codec->dev, "Downloading %zu byte stage 2 loader\n", fw->size);
+
+	/* Copy to local buffer first as vmalloc causes problems for dma */
+	img = kzalloc(fw->size, GFP_KERNEL | GFP_DMA);
+	if (!img) {
+		dev_err(codec->dev, "Failed to allocate image buffer\n");
+		ret = -ENOMEM;
+		goto abort2;
+	}
+
+	out = kzalloc(fw->size, GFP_KERNEL | GFP_DMA);
+	if (!out) {
+		dev_err(codec->dev, "Failed to allocate output buffer\n");
+		ret = -ENOMEM;
+		goto abort1;
+	}
+
+	memcpy(img, &fw->data[0], fw->size);
+
+	spi_message_init(&m);
+	memset(&t, 0, sizeof(t));
+	t.rx_buf = out;
+	t.tx_buf = img;
+	t.len = fw->size;
+	t.bits_per_word = 8;
+	t.speed_hz = wm0010->sysclk / 10;
+	spi_message_add_tail(&t, &m);
+
+	dev_dbg(codec->dev, "Starting initial download at %dHz\n",
+		t.speed_hz);
+
+	ret = spi_sync(spi, &m);
+	if (ret != 0) {
+		dev_err(codec->dev, "Initial download failed: %d\n", ret);
+		goto abort;
+	}
+
+	/* Look for errors from the boot ROM */
+	for (i = 0; i < fw->size; i++) {
+		if (out[i] != 0x55) {
+			dev_err(codec->dev, "Boot ROM error: %x in %d\n",
+				out[i], i);
+			wm0010_mark_boot_failure(wm0010);
+			ret = -EBUSY;
+			goto abort;
+		}
+	}
+abort:
+	kfree(out);
+abort1:
+	kfree(img);
+abort2:
+	release_firmware(fw);
+
+	return ret;
+}
+
+static int wm0010_boot(struct snd_soc_codec *codec)
+{
+	struct spi_device *spi = to_spi_device(codec->dev);
+	struct wm0010_priv *wm0010 = snd_soc_codec_get_drvdata(codec);
+	unsigned long flags;
+	int ret;
+	const struct firmware *fw;
 	struct spi_message m;
 	struct spi_transfer t;
 	struct dfw_pllrec pll_rec;
-	u32 *img, *p;
+	u32 *p, len;
 	u64 *img_swap;
 	u8 *out;
-	u32 len, offset;
 	int i;
 
 	spin_lock_irqsave(&wm0010->irq_lock, flags);
@@ -364,8 +603,6 @@ static int wm0010_boot(struct snd_soc_codec *codec)
 		ret = -ECANCELED;
 		goto err;
 	}
-
-	INIT_LIST_HEAD(&xfer_list);
 
 	mutex_lock(&wm0010->lock);
 	wm0010->pll_running = false;
@@ -402,65 +639,19 @@ static int wm0010_boot(struct snd_soc_codec *codec)
 	}
 
 	if (!wait_for_completion_timeout(&wm0010->boot_completion,
-					 msecs_to_jiffies(10)))
+					 msecs_to_jiffies(20)))
 		dev_err(codec->dev, "Failed to get interrupt from DSP\n");
 
 	spin_lock_irqsave(&wm0010->irq_lock, flags);
 	wm0010->state = WM0010_BOOTROM;
 	spin_unlock_irqrestore(&wm0010->irq_lock, flags);
 
-	dev_dbg(codec->dev, "Downloading %zu byte stage 2 loader\n", fw->size);
-
-	/* Copy to local buffer first as vmalloc causes problems for dma */
-	img = kzalloc(fw->size, GFP_KERNEL);
-	if (!img) {
-		dev_err(codec->dev, "Failed to allocate image buffer\n");
+	ret = wm0010_stage2_load(codec);
+	if (ret)
 		goto abort;
-	}
-
-	out = kzalloc(fw->size, GFP_KERNEL);
-	if (!out) {
-		dev_err(codec->dev, "Failed to allocate output buffer\n");
-		goto abort;
-	}
-
-	memcpy(img, &fw->data[0], fw->size);
-
-	spi_message_init(&m);
-	memset(&t, 0, sizeof(t));
-	t.rx_buf = out;
-	t.tx_buf = img;
-	t.len = fw->size;
-	t.bits_per_word = 8;
-	t.speed_hz = wm0010->sysclk / 10;
-	spi_message_add_tail(&t, &m);
-
-	dev_dbg(codec->dev, "Starting initial download at %dHz\n",
-		t.speed_hz);
-
-	ret = spi_sync(spi, &m);
-	if (ret != 0) {
-		dev_err(codec->dev, "Initial download failed: %d\n", ret);
-		goto abort;
-	}
-
-	/* Look for errors from the boot ROM */
-	for (i = 0; i < fw->size; i++) {
-		if (out[i] != 0x55) {
-			ret = -EBUSY;
-			dev_err(codec->dev, "Boot ROM error: %x in %d\n",
-				out[i], i);
-			wm0010_mark_boot_failure(wm0010);
-			goto abort;
-		}
-	}
-
-	release_firmware(fw);
-	kfree(img);
-	kfree(out);
 
 	if (!wait_for_completion_timeout(&wm0010->boot_completion,
-					 msecs_to_jiffies(10)))
+					 msecs_to_jiffies(20)))
 		dev_err(codec->dev, "Failed to get interrupt from DSP loader.\n");
 
 	spin_lock_irqsave(&wm0010->irq_lock, flags);
@@ -478,15 +669,16 @@ static int wm0010_boot(struct snd_soc_codec *codec)
 		/* On wm0010 only the CLKCTRL1 value is used */
 		pll_rec.clkctrl1 = wm0010->pll_clkctrl1;
 
+		ret = -ENOMEM;
 		len = pll_rec.length + 8;
-		out = kzalloc(len, GFP_KERNEL);
+		out = kzalloc(len, GFP_KERNEL | GFP_DMA);
 		if (!out) {
 			dev_err(codec->dev,
 				"Failed to allocate RX buffer\n");
 			goto abort;
 		}
 
-		img_swap = kzalloc(len, GFP_KERNEL);
+		img_swap = kzalloc(len, GFP_KERNEL | GFP_DMA);
 		if (!img_swap) {
 			dev_err(codec->dev,
 				"Failed to allocate image buffer\n");
@@ -535,127 +727,16 @@ static int wm0010_boot(struct snd_soc_codec *codec)
 	} else
 		dev_dbg(codec->dev, "Not enabling DSP PLL.");
 
-	ret = request_firmware(&fw, "wm0010.dfw", codec->dev);
-	if (ret != 0) {
-		dev_err(codec->dev, "Failed to request application: %d\n",
-			ret);
+	ret = wm0010_firmware_load("wm0010.dfw", codec);
+
+	if (ret != 0)
 		goto abort;
-	}
-
-	rec = (const struct dfw_binrec *)fw->data;
-	offset = 0;
-	wm0010->boot_done = 0;
-	wm0010->boot_failed = false;
-	BUG_ON(!list_empty(&xfer_list));
-	init_completion(&done);
-
-	/* First record should be INFO */
-	if (rec->command != DFW_CMD_INFO) {
-		dev_err(codec->dev, "First record not INFO\r\n");
-		goto abort;
-	}
-
-	/* Check it's a 0010 file */
-	if (rec->data[0] != DEVICE_ID_WM0010) {
-		dev_err(codec->dev, "Not a WM0010 firmware file.\r\n");
-		goto abort;
-	}
-
-	/* Skip the info record as we don't need to send it */
-	offset += ((rec->length) + 8);
-	rec = (void *)&rec->data[rec->length];
-
-	while (offset < fw->size) {
-		dev_dbg(codec->dev,
-			"Packet: command %d, data length = 0x%x\r\n",
-			rec->command, rec->length);
-		len = rec->length + 8;
-
-		out = kzalloc(len, GFP_KERNEL);
-		if (!out) {
-			dev_err(codec->dev,
-				"Failed to allocate RX buffer\n");
-			goto abort;
-		}
-
-		img_swap = kzalloc(len, GFP_KERNEL);
-		if (!img_swap) {
-			dev_err(codec->dev,
-				"Failed to allocate image buffer\n");
-			goto abort;
-		}
-
-		/* We need to re-order for 0010 */
-		byte_swap_64((u64 *)&rec->command, img_swap, len);
-
-		xfer = kzalloc(sizeof(*xfer), GFP_KERNEL);
-		if (!xfer) {
-			dev_err(codec->dev, "Failed to allocate xfer\n");
-			goto abort;
-		}
-
-		xfer->codec = codec;
-		list_add_tail(&xfer->list, &xfer_list);
-
-		spi_message_init(&xfer->m);
-		xfer->m.complete = wm0010_boot_xfer_complete;
-		xfer->m.context = xfer;
-		xfer->t.tx_buf = img_swap;
-		xfer->t.rx_buf = out;
-		xfer->t.len = len;
-		xfer->t.bits_per_word = 8;
-
-		if (!wm0010->pll_running) {
-			xfer->t.speed_hz = wm0010->sysclk / 6;
-		} else {
-			xfer->t.speed_hz = wm0010->max_spi_freq;
-
-			if (wm0010->board_max_spi_speed &&
-			   (wm0010->board_max_spi_speed < wm0010->max_spi_freq))
-					xfer->t.speed_hz = wm0010->board_max_spi_speed;
-		}
-
-		/* Store max usable spi frequency for later use */
-		wm0010->max_spi_freq = xfer->t.speed_hz;
-
-		spi_message_add_tail(&xfer->t, &xfer->m);
-
-		offset += ((rec->length) + 8);
-		rec = (void *)&rec->data[rec->length];
-
-		if (offset >= fw->size) {
-			dev_dbg(codec->dev, "All transfers scheduled\n");
-			xfer->done = &done;
-		}
-
-		ret = spi_async(spi, &xfer->m);
-		if (ret != 0) {
-			dev_err(codec->dev, "Write failed: %d\n", ret);
-			goto abort;
-		}
-
-		if (wm0010->boot_failed)
-			goto abort;
-	}
-
-	wait_for_completion(&done);
 
 	spin_lock_irqsave(&wm0010->irq_lock, flags);
 	wm0010->state = WM0010_FIRMWARE;
 	spin_unlock_irqrestore(&wm0010->irq_lock, flags);
 
 	mutex_unlock(&wm0010->lock);
-
-	release_firmware(fw);
-
-	while (!list_empty(&xfer_list)) {
-		xfer = list_first_entry(&xfer_list, struct wm0010_boot_xfer,
-					list);
-		kfree(xfer->t.rx_buf);
-		kfree(xfer->t.tx_buf);
-		list_del(&xfer->list);
-		kfree(xfer);
-	}
 
 	return 0;
 
@@ -713,11 +794,11 @@ static int wm0010_set_sysclk(struct snd_soc_codec *codec, int source,
 		wm0010->max_spi_freq = 0;
 	} else {
 		for (i = 0; i < ARRAY_SIZE(pll_clock_map); i++)
-			if (freq >= pll_clock_map[i].max_sysclk)
+			if (freq >= pll_clock_map[i].max_sysclk) {
+				wm0010->max_spi_freq = pll_clock_map[i].max_pll_spi_speed;
+				wm0010->pll_clkctrl1 = pll_clock_map[i].pll_clkctrl1;
 				break;
-
-		wm0010->max_spi_freq = pll_clock_map[i].max_pll_spi_speed;
-		wm0010->pll_clkctrl1 = pll_clock_map[i].pll_clkctrl1;
+			}
 	}
 
 	return 0;
@@ -784,7 +865,6 @@ static irqreturn_t wm0010_irq(int irq, void *data)
 	struct wm0010_priv *wm0010 = data;
 
 	switch (wm0010->state) {
-	case WM0010_POWER_OFF:
 	case WM0010_OUT_OF_RESET:
 	case WM0010_BOOTROM:
 	case WM0010_STAGE2:
@@ -808,7 +888,7 @@ static int wm0010_probe(struct snd_soc_codec *codec)
 	return 0;
 }
 
-static int __devinit wm0010_spi_probe(struct spi_device *spi)
+static int wm0010_spi_probe(struct spi_device *spi)
 {
 	unsigned long gpio_flags;
 	int ret;
@@ -894,6 +974,13 @@ static int __devinit wm0010_spi_probe(struct spi_device *spi)
 	}
 	wm0010->irq = irq;
 
+	ret = irq_set_irq_wake(irq, 1);
+	if (ret) {
+		dev_err(wm0010->dev, "Failed to set IRQ %d as wake source: %d\n",
+			irq, ret);
+		return ret;
+	}
+
 	if (spi->max_speed_hz)
 		wm0010->board_max_spi_speed = spi->max_speed_hz;
 	else
@@ -908,7 +995,7 @@ static int __devinit wm0010_spi_probe(struct spi_device *spi)
 	return 0;
 }
 
-static int __devexit wm0010_spi_remove(struct spi_device *spi)
+static int wm0010_spi_remove(struct spi_device *spi)
 {
 	struct wm0010_priv *wm0010 = spi_get_drvdata(spi);
 
@@ -916,6 +1003,8 @@ static int __devexit wm0010_spi_remove(struct spi_device *spi)
 
 	gpio_set_value_cansleep(wm0010->gpio_reset,
 				wm0010->gpio_reset_value);
+
+	irq_set_irq_wake(wm0010->irq, 0);
 
 	if (wm0010->irq)
 		free_irq(wm0010->irq, wm0010);
@@ -930,7 +1019,7 @@ static struct spi_driver wm0010_spi_driver = {
 		.owner	= THIS_MODULE,
 	},
 	.probe		= wm0010_spi_probe,
-	.remove		= __devexit_p(wm0010_spi_remove),
+	.remove		= wm0010_spi_remove,
 };
 
 module_spi_driver(wm0010_spi_driver);

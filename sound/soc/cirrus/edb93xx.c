@@ -27,7 +27,6 @@
 #include <sound/soc.h>
 #include <asm/mach-types.h>
 #include <mach/hardware.h>
-#include "ep93xx-pcm.h"
 
 static int edb93xx_hw_params(struct snd_pcm_substream *substream,
 			     struct snd_pcm_hw_params *params)
@@ -80,7 +79,7 @@ static struct snd_soc_card snd_soc_edb93xx = {
 	.num_links	= 1,
 };
 
-static int __devinit edb93xx_probe(struct platform_device *pdev)
+static int edb93xx_probe(struct platform_device *pdev)
 {
 	struct snd_soc_card *card = &snd_soc_edb93xx;
 	int ret;
@@ -101,7 +100,7 @@ static int __devinit edb93xx_probe(struct platform_device *pdev)
 	return ret;
 }
 
-static int __devexit edb93xx_remove(struct platform_device *pdev)
+static int edb93xx_remove(struct platform_device *pdev)
 {
 	struct snd_soc_card *card = platform_get_drvdata(pdev);
 
@@ -117,7 +116,7 @@ static struct platform_driver edb93xx_driver = {
 		.owner	= THIS_MODULE,
 	},
 	.probe		= edb93xx_probe,
-	.remove		= __devexit_p(edb93xx_remove),
+	.remove		= edb93xx_remove,
 };
 
 module_platform_driver(edb93xx_driver);

@@ -32,10 +32,6 @@
 #include "iuu_phoenix.h"
 #include <linux/random.h>
 
-/*
- * Version Information
- */
-#define DRIVER_VERSION "v0.12"
 #define DRIVER_DESC "Infinity USB Unlimited Phoenix driver"
 
 static const struct usb_device_id id_table[] = {
@@ -53,11 +49,12 @@ static int iuu_cardout;
 static bool xmas;
 static int vcc_default = 5;
 
+static int iuu_create_sysfs_attrs(struct usb_serial_port *port);
+static int iuu_remove_sysfs_attrs(struct usb_serial_port *port);
 static void read_rxcmd_callback(struct urb *urb);
 
 struct iuu_private {
 	spinlock_t lock;	/* store irq state */
-	wait_queue_head_t delta_msr_wait;
 	u8 line_status;
 	int tiostatus;		/* store IUART SIGNAL for tiocmget call */
 	u8 reset;		/* if 1 reset is needed */
@@ -72,63 +69,54 @@ struct iuu_private {
 	u32 clk;
 };
 
-
-static void iuu_free_buf(struct iuu_private *priv)
-{
-	kfree(priv->buf);
-	kfree(priv->writebuf);
-}
-
-static int iuu_alloc_buf(struct usb_serial *serial, struct iuu_private *priv)
-{
-	priv->buf = kzalloc(256, GFP_KERNEL);
-	priv->writebuf = kzalloc(256, GFP_KERNEL);
-	if (!priv->buf || !priv->writebuf) {
-		iuu_free_buf(priv);
-		dev_dbg(&serial->dev->dev, "%s problem allocation buffer\n", __func__);
-		return -ENOMEM;
-	}
-	dev_dbg(&serial->dev->dev, "%s - Privates buffers allocation success\n", __func__);
-	return 0;
-}
-
-static int iuu_startup(struct usb_serial *serial)
+static int iuu_port_probe(struct usb_serial_port *port)
 {
 	struct iuu_private *priv;
+	int ret;
 
 	priv = kzalloc(sizeof(struct iuu_private), GFP_KERNEL);
-	dev_dbg(&serial->dev->dev, "%s- priv allocation success\n", __func__);
 	if (!priv)
 		return -ENOMEM;
-	if (iuu_alloc_buf(serial, priv)) {
+
+	priv->buf = kzalloc(256, GFP_KERNEL);
+	if (!priv->buf) {
 		kfree(priv);
 		return -ENOMEM;
 	}
+
+	priv->writebuf = kzalloc(256, GFP_KERNEL);
+	if (!priv->writebuf) {
+		kfree(priv->buf);
+		kfree(priv);
+		return -ENOMEM;
+	}
+
 	priv->vcc = vcc_default;
 	spin_lock_init(&priv->lock);
-	init_waitqueue_head(&priv->delta_msr_wait);
-	usb_set_serial_port_data(serial->port[0], priv);
+
+	usb_set_serial_port_data(port, priv);
+
+	ret = iuu_create_sysfs_attrs(port);
+	if (ret) {
+		kfree(priv->writebuf);
+		kfree(priv->buf);
+		kfree(priv);
+		return ret;
+	}
+
 	return 0;
 }
 
-/* Release function */
-static void iuu_release(struct usb_serial *serial)
+static int iuu_port_remove(struct usb_serial_port *port)
 {
-	struct usb_serial_port *port = serial->port[0];
 	struct iuu_private *priv = usb_get_serial_port_data(port);
-	if (!port)
-		return;
 
-	if (priv) {
-		iuu_free_buf(priv);
-		dev_dbg(&port->dev, "%s - I will free all\n", __func__);
-		usb_set_serial_port_data(port, NULL);
+	iuu_remove_sysfs_attrs(port);
+	kfree(priv->writebuf);
+	kfree(priv->buf);
+	kfree(priv);
 
-		dev_dbg(&port->dev, "%s - priv is not anymore in port structure\n", __func__);
-		kfree(priv);
-
-		dev_dbg(&port->dev, "%s priv is now kfree\n", __func__);
-	}
+	return 0;
 }
 
 static int iuu_tiocmset(struct tty_struct *tty,
@@ -299,7 +287,7 @@ static int bulk_immediate(struct usb_serial_port *port, u8 *buf, u8 count)
 	    usb_bulk_msg(serial->dev,
 			 usb_sndbulkpipe(serial->dev,
 					 port->bulk_out_endpointAddress), buf,
-			 count, &actual, HZ * 1);
+			 count, &actual, 1000);
 
 	if (status != IUU_OPERATION_OK)
 		dev_dbg(&port->dev, "%s - error = %2x\n", __func__, status);
@@ -319,7 +307,7 @@ static int read_immediate(struct usb_serial_port *port, u8 *buf, u8 count)
 	    usb_bulk_msg(serial->dev,
 			 usb_rcvbulkpipe(serial->dev,
 					 port->bulk_in_endpointAddress), buf,
-			 count, &actual, HZ * 1);
+			 count, &actual, 1000);
 
 	if (status != IUU_OPERATION_OK)
 		dev_dbg(&port->dev, "%s - error = %2x\n", __func__, status);
@@ -591,7 +579,6 @@ static void read_buf_callback(struct urb *urb)
 {
 	struct usb_serial_port *port = urb->context;
 	unsigned char *data = urb->transfer_buffer;
-	struct tty_struct *tty;
 	int status = urb->status;
 
 	if (status) {
@@ -602,14 +589,12 @@ static void read_buf_callback(struct urb *urb)
 	}
 
 	dev_dbg(&port->dev, "%s - %i chars to write\n", __func__, urb->actual_length);
-	tty = tty_port_tty_get(&port->port);
 	if (data == NULL)
 		dev_dbg(&port->dev, "%s - data is NULL !!!\n", __func__);
-	if (tty && urb->actual_length && data) {
-		tty_insert_flip_string(tty, data, urb->actual_length);
-		tty_flip_buffer_push(tty);
+	if (urb->actual_length && data) {
+		tty_insert_flip_string(&port->port, data, urb->actual_length);
+		tty_flip_buffer_push(&port->port);
 	}
-	tty_kref_put(tty);
 	iuu_led_activity_on(urb);
 }
 
@@ -957,22 +942,13 @@ static void iuu_set_termios(struct tty_struct *tty,
 static void iuu_close(struct usb_serial_port *port)
 {
 	/* iuu_led (port,255,0,0,0); */
-	struct usb_serial *serial;
-
-	serial = port->serial;
-	if (!serial)
-		return;
 
 	iuu_uart_off(port);
-	if (serial->dev) {
-		/* free writebuf */
-		/* shutdown our urbs */
-		dev_dbg(&port->dev, "%s - shutting down urbs\n", __func__);
-		usb_kill_urb(port->write_urb);
-		usb_kill_urb(port->read_urb);
-		usb_kill_urb(port->interrupt_in_urb);
-		iuu_led(port, 0, 0, 0xF000, 0xFF);
-	}
+
+	usb_kill_urb(port->write_urb);
+	usb_kill_urb(port->read_urb);
+
+	iuu_led(port, 0, 0, 0xF000, 0xFF);
 }
 
 static void iuu_init_termios(struct tty_struct *tty)
@@ -1154,7 +1130,7 @@ static int iuu_vcc_set(struct usb_serial_port *port, unsigned int vcc)
  * Sysfs Attributes
  */
 
-static ssize_t show_vcc_mode(struct device *dev,
+static ssize_t vcc_mode_show(struct device *dev,
 	struct device_attribute *attr, char *buf)
 {
 	struct usb_serial_port *port = to_usb_serial_port(dev);
@@ -1163,14 +1139,14 @@ static ssize_t show_vcc_mode(struct device *dev,
 	return sprintf(buf, "%d\n", priv->vcc);
 }
 
-static ssize_t store_vcc_mode(struct device *dev,
+static ssize_t vcc_mode_store(struct device *dev,
 	struct device_attribute *attr, const char *buf, size_t count)
 {
 	struct usb_serial_port *port = to_usb_serial_port(dev);
 	struct iuu_private *priv = usb_get_serial_port_data(port);
 	unsigned long v;
 
-	if (strict_strtoul(buf, 10, &v)) {
+	if (kstrtoul(buf, 10, &v)) {
 		dev_err(dev, "%s - vcc_mode: %s is not a unsigned long\n",
 				__func__, buf);
 		goto fail_store_vcc_mode;
@@ -1187,9 +1163,7 @@ static ssize_t store_vcc_mode(struct device *dev,
 fail_store_vcc_mode:
 	return count;
 }
-
-static DEVICE_ATTR(vcc_mode, S_IRUSR | S_IWUSR, show_vcc_mode,
-	store_vcc_mode);
+static DEVICE_ATTR_RW(vcc_mode);
 
 static int iuu_create_sysfs_attrs(struct usb_serial_port *port)
 {
@@ -1215,8 +1189,6 @@ static struct usb_serial_driver iuu_device = {
 	.num_ports = 1,
 	.bulk_in_size = 512,
 	.bulk_out_size = 512,
-	.port_probe = iuu_create_sysfs_attrs,
-	.port_remove = iuu_remove_sysfs_attrs,
 	.open = iuu_open,
 	.close = iuu_close,
 	.write = iuu_uart_write,
@@ -1225,8 +1197,8 @@ static struct usb_serial_driver iuu_device = {
 	.tiocmset = iuu_tiocmset,
 	.set_termios = iuu_set_termios,
 	.init_termios = iuu_init_termios,
-	.attach = iuu_startup,
-	.release = iuu_release,
+	.port_probe = iuu_port_probe,
+	.port_remove = iuu_port_remove,
 };
 
 static struct usb_serial_driver * const serial_drivers[] = {
@@ -1239,8 +1211,6 @@ MODULE_AUTHOR("Alain Degreffe eczema@ecze.com");
 
 MODULE_DESCRIPTION(DRIVER_DESC);
 MODULE_LICENSE("GPL");
-
-MODULE_VERSION(DRIVER_VERSION);
 
 module_param(xmas, bool, S_IRUGO | S_IWUSR);
 MODULE_PARM_DESC(xmas, "Xmas colors enabled or not");

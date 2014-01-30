@@ -25,14 +25,13 @@
 #include <asm/user.h>
 
 typedef unsigned long elf_greg_t;
-typedef unsigned long elf_freg_t[3];
 
-#define ELF_NGREG (sizeof (struct pt_regs) / sizeof(elf_greg_t))
+#define ELF_NGREG (sizeof(struct user_pt_regs) / sizeof(elf_greg_t))
+#define ELF_CORE_COPY_REGS(dest, regs)	\
+	*(struct user_pt_regs *)&(dest) = (regs)->user_regs;
+
 typedef elf_greg_t elf_gregset_t[ELF_NGREG];
-
-typedef struct user_fp elf_fpregset_t;
-
-#define EM_AARCH64		183
+typedef struct user_fpsimd_state elf_fpregset_t;
 
 /*
  * AArch64 static relocation types.
@@ -87,16 +86,28 @@ typedef struct user_fp elf_fpregset_t;
 #define R_AARCH64_MOVW_PREL_G2_NC	292
 #define R_AARCH64_MOVW_PREL_G3		293
 
-
 /*
  * These are used to set parameters in the core dumps.
  */
 #define ELF_CLASS	ELFCLASS64
+#ifdef __AARCH64EB__
+#define ELF_DATA	ELFDATA2MSB
+#else
 #define ELF_DATA	ELFDATA2LSB
+#endif
 #define ELF_ARCH	EM_AARCH64
 
+/*
+ * This yields a string that ld.so will use to load implementation
+ * specific libraries for optimization.  This is more specific in
+ * intent than poking at uname or /proc/cpuinfo.
+ */
 #define ELF_PLATFORM_SIZE	16
+#ifdef __AARCH64EB__
+#define ELF_PLATFORM		("aarch64_be")
+#else
 #define ELF_PLATFORM		("aarch64")
+#endif
 
 /*
  * This is used to ensure we don't load something for the wrong architecture.
@@ -151,8 +162,12 @@ extern unsigned long arch_randomize_brk(struct mm_struct *mm);
 #define arch_randomize_brk arch_randomize_brk
 
 #ifdef CONFIG_COMPAT
-#define EM_ARM				40
+
+#ifdef __AARCH64EB__
+#define COMPAT_ELF_PLATFORM		("v8b")
+#else
 #define COMPAT_ELF_PLATFORM		("v8l")
+#endif
 
 #define COMPAT_ELF_ET_DYN_BASE		(randomize_et_dyn(2 * TASK_SIZE_32 / 3))
 

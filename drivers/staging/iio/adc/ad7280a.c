@@ -117,7 +117,7 @@
  */
 #define POLYNOM		0x2F
 #define POLYNOM_ORDER	8
-#define HIGHBIT		1 << (POLYNOM_ORDER - 1);
+#define HIGHBIT		(1 << (POLYNOM_ORDER - 1))
 
 struct ad7280_state {
 	struct spi_device		*spi;
@@ -199,12 +199,8 @@ static int __ad7280_read32(struct spi_device *spi, unsigned *val)
 		.rx_buf = &rx_buf,
 		.len = 4,
 	};
-	struct spi_message m;
 
-	spi_message_init(&m);
-	spi_message_add_tail(&t, &m);
-
-	ret = spi_sync(spi, &m);
+	ret = spi_sync_transfer(spi, &t, 1);
 	if (ret)
 		return ret;
 
@@ -507,9 +503,10 @@ static int ad7280_channel_init(struct ad7280_state *st)
 				st->channels[cnt].channel = (dev * 6) + ch - 6;
 			}
 			st->channels[cnt].indexed = 1;
-			st->channels[cnt].info_mask =
-				IIO_CHAN_INFO_RAW_SEPARATE_BIT |
-				IIO_CHAN_INFO_SCALE_SHARED_BIT;
+			st->channels[cnt].info_mask_separate =
+				BIT(IIO_CHAN_INFO_RAW);
+			st->channels[cnt].info_mask_shared_by_type =
+				BIT(IIO_CHAN_INFO_SCALE);
 			st->channels[cnt].address =
 				AD7280A_DEVADDR(dev) << 8 | ch;
 			st->channels[cnt].scan_index = cnt;
@@ -525,9 +522,8 @@ static int ad7280_channel_init(struct ad7280_state *st)
 	st->channels[cnt].channel2 = dev * 6;
 	st->channels[cnt].address = AD7280A_ALL_CELLS;
 	st->channels[cnt].indexed = 1;
-	st->channels[cnt].info_mask =
-		IIO_CHAN_INFO_RAW_SEPARATE_BIT |
-		IIO_CHAN_INFO_SCALE_SHARED_BIT;
+	st->channels[cnt].info_mask_separate = BIT(IIO_CHAN_INFO_RAW);
+	st->channels[cnt].info_mask_shared_by_type = BIT(IIO_CHAN_INFO_SCALE);
 	st->channels[cnt].scan_index = cnt;
 	st->channels[cnt].scan_type.sign = 'u';
 	st->channels[cnt].scan_type.realbits = 32;
@@ -636,7 +632,7 @@ static ssize_t ad7280_write_channel_config(struct device *dev,
 	long val;
 	int ret;
 
-	ret = strict_strtol(buf, 10, &val);
+	ret = kstrtol(buf, 10, &val);
 	if (ret)
 		return ret;
 
@@ -787,7 +783,6 @@ static int ad7280_read_raw(struct iio_dev *indio_dev,
 			   long m)
 {
 	struct ad7280_state *st = iio_priv(indio_dev);
-	unsigned int scale_uv;
 	int ret;
 
 	switch (m) {
@@ -808,13 +803,12 @@ static int ad7280_read_raw(struct iio_dev *indio_dev,
 		return IIO_VAL_INT;
 	case IIO_CHAN_INFO_SCALE:
 		if ((chan->address & 0xFF) <= AD7280A_CELL_VOLTAGE_6)
-			scale_uv = (4000 * 1000) >> AD7280A_BITS;
+			*val = 4000;
 		else
-			scale_uv = (5000 * 1000) >> AD7280A_BITS;
+			*val = 5000;
 
-		*val =  scale_uv / 1000;
-		*val2 = (scale_uv % 1000) * 1000;
-		return IIO_VAL_INT_PLUS_MICRO;
+		*val2 = AD7280A_BITS;
+		return IIO_VAL_FRACTIONAL_LOG2;
 	}
 	return -EINVAL;
 }
@@ -832,15 +826,16 @@ static const struct ad7280_platform_data ad7793_default_pdata = {
 	.thermistor_term_en = true,
 };
 
-static int __devinit ad7280_probe(struct spi_device *spi)
+static int ad7280_probe(struct spi_device *spi)
 {
 	const struct ad7280_platform_data *pdata = spi->dev.platform_data;
 	struct ad7280_state *st;
 	int ret;
 	const unsigned short tACQ_ns[4] = {465, 1010, 1460, 1890};
 	const unsigned short nAVG[4] = {1, 2, 4, 8};
-	struct iio_dev *indio_dev = iio_device_alloc(sizeof(*st));
+	struct iio_dev *indio_dev;
 
+	indio_dev = devm_iio_device_alloc(&spi->dev, sizeof(*st));
 	if (indio_dev == NULL)
 		return -ENOMEM;
 
@@ -864,7 +859,7 @@ static int __devinit ad7280_probe(struct spi_device *spi)
 
 	ret = ad7280_chain_setup(st);
 	if (ret < 0)
-		goto error_free_device;
+		return ret;
 
 	st->slave_num = ret;
 	st->scan_cnt = (st->slave_num + 1) * AD7280A_NUM_CH;
@@ -895,7 +890,7 @@ static int __devinit ad7280_probe(struct spi_device *spi)
 
 	ret = ad7280_channel_init(st);
 	if (ret < 0)
-		goto error_free_device;
+		return ret;
 
 	indio_dev->num_channels = ret;
 	indio_dev->channels = st->channels;
@@ -944,13 +939,10 @@ error_free_attr:
 error_free_channels:
 	kfree(st->channels);
 
-error_free_device:
-	iio_device_free(indio_dev);
-
 	return ret;
 }
 
-static int __devexit ad7280_remove(struct spi_device *spi)
+static int ad7280_remove(struct spi_device *spi)
 {
 	struct iio_dev *indio_dev = spi_get_drvdata(spi);
 	struct ad7280_state *st = iio_priv(indio_dev);
@@ -964,7 +956,6 @@ static int __devexit ad7280_remove(struct spi_device *spi)
 
 	kfree(st->channels);
 	kfree(st->iio_attr);
-	iio_device_free(indio_dev);
 
 	return 0;
 }
@@ -981,7 +972,7 @@ static struct spi_driver ad7280_driver = {
 		.owner	= THIS_MODULE,
 	},
 	.probe		= ad7280_probe,
-	.remove		= __devexit_p(ad7280_remove),
+	.remove		= ad7280_remove,
 	.id_table	= ad7280_id,
 };
 module_spi_driver(ad7280_driver);

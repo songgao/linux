@@ -22,6 +22,7 @@
 #include <linux/mii.h>
 #include <linux/platform_device.h>
 #include <linux/mdio-bitbang.h>
+#include <linux/of_address.h>
 #include <linux/of_mdio.h>
 #include <linux/of_platform.h>
 
@@ -108,8 +109,7 @@ static struct mdiobb_ops bb_ops = {
 	.get_mdio_data = mdio_read,
 };
 
-static int __devinit fs_mii_bitbang_init(struct mii_bus *bus,
-                                         struct device_node *np)
+static int fs_mii_bitbang_init(struct mii_bus *bus, struct device_node *np)
 {
 	struct resource res;
 	const u32 *data;
@@ -150,7 +150,7 @@ static int __devinit fs_mii_bitbang_init(struct mii_bus *bus,
 	return 0;
 }
 
-static int __devinit fs_enet_mdio_probe(struct platform_device *ofdev)
+static int fs_enet_mdio_probe(struct platform_device *ofdev)
 {
 	struct mii_bus *new_bus;
 	struct bb_info *bitbang;
@@ -180,7 +180,7 @@ static int __devinit fs_enet_mdio_probe(struct platform_device *ofdev)
 	}
 
 	new_bus->parent = &ofdev->dev;
-	dev_set_drvdata(&ofdev->dev, new_bus);
+	platform_set_drvdata(ofdev, new_bus);
 
 	ret = of_mdiobus_register(new_bus, ofdev->dev.of_node);
 	if (ret)
@@ -189,7 +189,6 @@ static int __devinit fs_enet_mdio_probe(struct platform_device *ofdev)
 	return 0;
 
 out_free_irqs:
-	dev_set_drvdata(&ofdev->dev, NULL);
 	kfree(new_bus->irq);
 out_unmap_regs:
 	iounmap(bitbang->dir);
@@ -203,11 +202,10 @@ out:
 
 static int fs_enet_mdio_remove(struct platform_device *ofdev)
 {
-	struct mii_bus *bus = dev_get_drvdata(&ofdev->dev);
+	struct mii_bus *bus = platform_get_drvdata(ofdev);
 	struct bb_info *bitbang = bus->priv;
 
 	mdiobus_unregister(bus);
-	dev_set_drvdata(&ofdev->dev, NULL);
 	kfree(bus->irq);
 	free_mdio_bitbang(bus);
 	iounmap(bitbang->dir);

@@ -213,10 +213,10 @@ static int adp8860_led_setup(struct adp8860_led *led)
 	return ret;
 }
 
-static int __devinit adp8860_led_probe(struct i2c_client *client)
+static int adp8860_led_probe(struct i2c_client *client)
 {
 	struct adp8860_backlight_platform_data *pdata =
-		client->dev.platform_data;
+		dev_get_platdata(&client->dev);
 	struct adp8860_bl *data = i2c_get_clientdata(client);
 	struct adp8860_led *led, *led_dat;
 	struct led_info *cur_led;
@@ -249,12 +249,14 @@ static int __devinit adp8860_led_probe(struct i2c_client *client)
 		if (led_dat->id > 7 || led_dat->id < 1) {
 			dev_err(&client->dev, "Invalid LED ID %d\n",
 				led_dat->id);
+			ret = -EINVAL;
 			goto err;
 		}
 
 		if (pdata->bl_led_assign & (1 << (led_dat->id - 1))) {
 			dev_err(&client->dev, "LED %d used by Backlight\n",
 				led_dat->id);
+			ret = -EBUSY;
 			goto err;
 		}
 
@@ -295,10 +297,10 @@ static int __devinit adp8860_led_probe(struct i2c_client *client)
 	return ret;
 }
 
-static int __devexit adp8860_led_remove(struct i2c_client *client)
+static int adp8860_led_remove(struct i2c_client *client)
 {
 	struct adp8860_backlight_platform_data *pdata =
-		client->dev.platform_data;
+		dev_get_platdata(&client->dev);
 	struct adp8860_bl *data = i2c_get_clientdata(client);
 	int i;
 
@@ -310,12 +312,12 @@ static int __devexit adp8860_led_remove(struct i2c_client *client)
 	return 0;
 }
 #else
-static int __devinit adp8860_led_probe(struct i2c_client *client)
+static int adp8860_led_probe(struct i2c_client *client)
 {
 	return 0;
 }
 
-static int __devexit adp8860_led_remove(struct i2c_client *client)
+static int adp8860_led_remove(struct i2c_client *client)
 {
 	return 0;
 }
@@ -650,13 +652,13 @@ static const struct attribute_group adp8860_bl_attr_group = {
 	.attrs = adp8860_bl_attributes,
 };
 
-static int __devinit adp8860_probe(struct i2c_client *client,
+static int adp8860_probe(struct i2c_client *client,
 					const struct i2c_device_id *id)
 {
 	struct backlight_device *bl;
 	struct adp8860_bl *data;
 	struct adp8860_backlight_platform_data *pdata =
-		client->dev.platform_data;
+		dev_get_platdata(&client->dev);
 	struct backlight_properties props;
 	uint8_t reg_val;
 	int ret;
@@ -709,8 +711,9 @@ static int __devinit adp8860_probe(struct i2c_client *client,
 
 	mutex_init(&data->lock);
 
-	bl = backlight_device_register(dev_driver_string(&client->dev),
-			&client->dev, data, &adp8860_bl_ops, &props);
+	bl = devm_backlight_device_register(&client->dev,
+				dev_driver_string(&client->dev),
+				&client->dev, data, &adp8860_bl_ops, &props);
 	if (IS_ERR(bl)) {
 		dev_err(&client->dev, "failed to register backlight\n");
 		return PTR_ERR(bl);
@@ -726,7 +729,7 @@ static int __devinit adp8860_probe(struct i2c_client *client,
 
 	if (ret) {
 		dev_err(&client->dev, "failed to register sysfs\n");
-		goto out1;
+		return ret;
 	}
 
 	ret = adp8860_bl_setup(bl);
@@ -749,13 +752,11 @@ out:
 	if (data->en_ambl_sens)
 		sysfs_remove_group(&data->bl->dev.kobj,
 			&adp8860_bl_attr_group);
-out1:
-	backlight_device_unregister(bl);
 
 	return ret;
 }
 
-static int __devexit adp8860_remove(struct i2c_client *client)
+static int adp8860_remove(struct i2c_client *client)
 {
 	struct adp8860_bl *data = i2c_get_clientdata(client);
 
@@ -768,29 +769,31 @@ static int __devexit adp8860_remove(struct i2c_client *client)
 		sysfs_remove_group(&data->bl->dev.kobj,
 			&adp8860_bl_attr_group);
 
-	backlight_device_unregister(data->bl);
-
 	return 0;
 }
 
-#ifdef CONFIG_PM
-static int adp8860_i2c_suspend(struct i2c_client *client, pm_message_t message)
+#ifdef CONFIG_PM_SLEEP
+static int adp8860_i2c_suspend(struct device *dev)
 {
+	struct i2c_client *client = to_i2c_client(dev);
+
 	adp8860_clr_bits(client, ADP8860_MDCR, NSTBY);
 
 	return 0;
 }
 
-static int adp8860_i2c_resume(struct i2c_client *client)
+static int adp8860_i2c_resume(struct device *dev)
 {
-	adp8860_set_bits(client, ADP8860_MDCR, NSTBY);
+	struct i2c_client *client = to_i2c_client(dev);
+
+	adp8860_set_bits(client, ADP8860_MDCR, NSTBY | BLEN);
 
 	return 0;
 }
-#else
-#define adp8860_i2c_suspend NULL
-#define adp8860_i2c_resume NULL
 #endif
+
+static SIMPLE_DEV_PM_OPS(adp8860_i2c_pm_ops, adp8860_i2c_suspend,
+			adp8860_i2c_resume);
 
 static const struct i2c_device_id adp8860_id[] = {
 	{ "adp8860", adp8860 },
@@ -802,12 +805,11 @@ MODULE_DEVICE_TABLE(i2c, adp8860_id);
 
 static struct i2c_driver adp8860_driver = {
 	.driver = {
-		.name = KBUILD_MODNAME,
+		.name	= KBUILD_MODNAME,
+		.pm	= &adp8860_i2c_pm_ops,
 	},
 	.probe    = adp8860_probe,
-	.remove   = __devexit_p(adp8860_remove),
-	.suspend = adp8860_i2c_suspend,
-	.resume  = adp8860_i2c_resume,
+	.remove   = adp8860_remove,
 	.id_table = adp8860_id,
 };
 

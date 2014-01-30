@@ -30,11 +30,6 @@
 #define SetCRT2ToDualEdge   0x8000
 
 #define ReserveTVOption     0x0008
-#define GatingCRT           0x0800
-#define DisableChB          0x1000
-#define EnableChB           0x2000
-#define DisableChA          0x4000
-#define EnableChA           0x8000
 
 #define SetTVLowResolution   0x0400
 #define TVSimuMode           0x0800
@@ -62,10 +57,6 @@
 #define EnableVBCLKDRVLOW    0x4000
 #define EnablePLLSPLOW       0x8000
 
-#define LCDBToA              0x20   /* LCD SetFlag */
-#define StLCDBToA            0x40
-#define LockLCDBToA          0x80
-#define   LCDToFull          0x10
 #define AVIDEOSense          0x01   /* CR32 */
 #define SVIDEOSense          0x02
 #define SCARTSense           0x04
@@ -254,9 +245,16 @@
 #define XGI330_SR1F 0
 #define XGI330_SR23 0xf6
 #define XGI330_SR24 0x0d
-#define XGI330_SR25 0
 #define XGI330_SR31 0xc0
 #define XGI330_SR32 0x11
 #define XGI330_SR33 0
+
+extern const struct XGI_ExtStruct XGI330_EModeIDTable[];
+extern const struct XGI_Ext2Struct XGI330_RefIndex[];
+extern const struct XGI_CRT1TableStruct XGI_CRT1Table[];
+extern const struct XGI_ECLKDataStruct XGI340_ECLKData[];
+extern const struct SiS_VCLKData XGI_VCLKData[];
+extern const unsigned char XGI340_CR6B[][4];
+extern const unsigned char XGI340_AGPReg[];
 
 #endif

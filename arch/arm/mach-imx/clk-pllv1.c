@@ -4,10 +4,10 @@
 #include <linux/slab.h>
 #include <linux/kernel.h>
 #include <linux/err.h>
-#include <mach/common.h>
-#include <mach/hardware.h>
 
 #include "clk.h"
+#include "common.h"
+#include "hardware.h"
 
 /**
  * pll v1
@@ -78,7 +78,7 @@ static unsigned long clk_pllv1_recalc_rate(struct clk_hw *hw,
 	return ll;
 }
 
-struct clk_ops clk_pllv1_ops = {
+static struct clk_ops clk_pllv1_ops = {
 	.recalc_rate = clk_pllv1_recalc_rate,
 };
 

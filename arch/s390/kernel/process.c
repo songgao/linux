@@ -61,18 +61,8 @@ unsigned long thread_saved_pc(struct task_struct *tsk)
 	return sf->gprs[8];
 }
 
-/*
- * The idle loop on a S390...
- */
-static void default_idle(void)
+void arch_cpu_idle(void)
 {
-	if (cpu_is_offline(smp_processor_id()))
-		cpu_die();
-	local_irq_disable();
-	if (need_resched()) {
-		local_irq_enable();
-		return;
-	}
 	local_mcck_disable();
 	if (test_thread_flag(TIF_MCCK_PENDING)) {
 		local_mcck_enable();
@@ -81,21 +71,18 @@ static void default_idle(void)
 	}
 	/* Halt the cpu and keep track of cpu time accounting. */
 	vtime_stop_cpu();
+	local_irq_enable();
 }
 
-void cpu_idle(void)
+void arch_cpu_idle_exit(void)
 {
-	for (;;) {
-		tick_nohz_idle_enter();
-		rcu_idle_enter();
-		while (!need_resched() && !test_thread_flag(TIF_MCCK_PENDING))
-			default_idle();
-		rcu_idle_exit();
-		tick_nohz_idle_exit();
-		if (test_thread_flag(TIF_MCCK_PENDING))
-			s390_handle_mcck();
-		schedule_preempt_disabled();
-	}
+	if (test_thread_flag(TIF_MCCK_PENDING))
+		s390_handle_mcck();
+}
+
+void arch_cpu_idle_dead(void)
+{
+	cpu_die();
 }
 
 extern void __kprobes kernel_thread_starter(void);
@@ -117,8 +104,7 @@ void release_thread(struct task_struct *dead_task)
 }
 
 int copy_thread(unsigned long clone_flags, unsigned long new_stackp,
-		unsigned long arg,
-		struct task_struct *p, struct pt_regs *regs)
+		unsigned long arg, struct task_struct *p)
 {
 	struct thread_info *ti;
 	struct fake_frame
@@ -150,10 +136,10 @@ int copy_thread(unsigned long clone_flags, unsigned long new_stackp,
 	frame->sf.gprs[9] = (unsigned long) frame;
 
 	/* Store access registers to kernel stack of new process. */
-	if (unlikely(!regs)) {
+	if (unlikely(p->flags & PF_KTHREAD)) {
 		/* kernel thread */
 		memset(&frame->childregs, 0, sizeof(struct pt_regs));
-		frame->childregs.psw.mask = psw_kernel_bits | PSW_MASK_DAT |
+		frame->childregs.psw.mask = PSW_KERNEL_BITS | PSW_MASK_DAT |
 				PSW_MASK_IO | PSW_MASK_EXT | PSW_MASK_MCHECK;
 		frame->childregs.psw.addr = PSW_ADDR_AMODE |
 				(unsigned long) kernel_thread_starter;
@@ -164,9 +150,10 @@ int copy_thread(unsigned long clone_flags, unsigned long new_stackp,
 
 		return 0;
 	}
-	frame->childregs = *regs;
+	frame->childregs = *current_pt_regs();
 	frame->childregs.gprs[2] = 0;	/* child returns 0 on fork. */
-	frame->childregs.gprs[15] = new_stackp;
+	if (new_stackp)
+		frame->childregs.gprs[15] = new_stackp;
 
 	/* Don't copy runtime instrumentation info */
 	p->thread.ri_cb = NULL;
@@ -178,60 +165,30 @@ int copy_thread(unsigned long clone_flags, unsigned long new_stackp,
 	 * save fprs to current->thread.fp_regs to merge them with
 	 * the emulated registers and then copy the result to the child.
 	 */
-	save_fp_regs(&current->thread.fp_regs);
+	save_fp_ctl(&current->thread.fp_regs.fpc);
+	save_fp_regs(current->thread.fp_regs.fprs);
 	memcpy(&p->thread.fp_regs, &current->thread.fp_regs,
 	       sizeof(s390_fp_regs));
 	/* Set a new TLS ?  */
 	if (clone_flags & CLONE_SETTLS)
-		p->thread.acrs[0] = regs->gprs[6];
+		p->thread.acrs[0] = frame->childregs.gprs[6];
 #else /* CONFIG_64BIT */
 	/* Save the fpu registers to new thread structure. */
-	save_fp_regs(&p->thread.fp_regs);
+	save_fp_ctl(&p->thread.fp_regs.fpc);
+	save_fp_regs(p->thread.fp_regs.fprs);
+	p->thread.fp_regs.pad = 0;
 	/* Set a new TLS ?  */
 	if (clone_flags & CLONE_SETTLS) {
+		unsigned long tls = frame->childregs.gprs[6];
 		if (is_compat_task()) {
-			p->thread.acrs[0] = (unsigned int) regs->gprs[6];
+			p->thread.acrs[0] = (unsigned int)tls;
 		} else {
-			p->thread.acrs[0] = (unsigned int)(regs->gprs[6] >> 32);
-			p->thread.acrs[1] = (unsigned int) regs->gprs[6];
+			p->thread.acrs[0] = (unsigned int)(tls >> 32);
+			p->thread.acrs[1] = (unsigned int)tls;
 		}
 	}
 #endif /* CONFIG_64BIT */
 	return 0;
-}
-
-SYSCALL_DEFINE0(fork)
-{
-	struct pt_regs *regs = task_pt_regs(current);
-	return do_fork(SIGCHLD, regs->gprs[15], regs, 0, NULL, NULL);
-}
-
-SYSCALL_DEFINE4(clone, unsigned long, newsp, unsigned long, clone_flags,
-		int __user *, parent_tidptr, int __user *, child_tidptr)
-{
-	struct pt_regs *regs = task_pt_regs(current);
-
-	if (!newsp)
-		newsp = regs->gprs[15];
-	return do_fork(clone_flags, newsp, regs, 0,
-		       parent_tidptr, child_tidptr);
-}
-
-/*
- * This is trivial, and on the face of it looks like it
- * could equally well be done in user mode.
- *
- * Not so, for quite unobvious reasons - register pressure.
- * In user mode vfork() cannot have a stack frame, and if
- * done by calling the "clone()" system call directly, you
- * do not have enough call-clobbered registers to hold all
- * the information you need.
- */
-SYSCALL_DEFINE0(vfork)
-{
-	struct pt_regs *regs = task_pt_regs(current);
-	return do_fork(CLONE_VFORK | CLONE_VM | SIGCHLD,
-		       regs->gprs[15], regs, 0, NULL, NULL);
 }
 
 asmlinkage void execve_tail(void)
@@ -251,10 +208,12 @@ int dump_fpu (struct pt_regs * regs, s390_fp_regs *fpregs)
 	 * save fprs to current->thread.fp_regs to merge them with
 	 * the emulated registers and then copy the result to the dump.
 	 */
-	save_fp_regs(&current->thread.fp_regs);
+	save_fp_ctl(&current->thread.fp_regs.fpc);
+	save_fp_regs(current->thread.fp_regs.fprs);
 	memcpy(fpregs, &current->thread.fp_regs, sizeof(s390_fp_regs));
 #else /* CONFIG_64BIT */
-	save_fp_regs(fpregs);
+	save_fp_ctl(&fpregs->fpc);
+	save_fp_regs(fpregs->fprs);
 #endif /* CONFIG_64BIT */
 	return 1;
 }

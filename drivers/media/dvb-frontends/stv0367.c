@@ -33,6 +33,9 @@
 #include "stv0367_regs.h"
 #include "stv0367_priv.h"
 
+/* Max transfer size done by I2C transfer functions */
+#define MAX_XFER_SIZE  64
+
 static int stvdebug;
 module_param_named(debug, stvdebug, int, 0644);
 
@@ -767,7 +770,7 @@ static struct st_register def0367cab[STV0367CAB_NBREGS] = {
 static
 int stv0367_writeregs(struct stv0367_state *state, u16 reg, u8 *data, int len)
 {
-	u8 buf[len + 2];
+	u8 buf[MAX_XFER_SIZE];
 	struct i2c_msg msg = {
 		.addr = state->config->demod_address,
 		.flags = 0,
@@ -775,6 +778,14 @@ int stv0367_writeregs(struct stv0367_state *state, u16 reg, u8 *data, int len)
 		.len = len + 2
 	};
 	int ret;
+
+	if (2 + len > sizeof(buf)) {
+		printk(KERN_WARNING
+		       "%s: i2c wr reg=%04x: len=%d is too big!\n",
+		       KBUILD_MODNAME, reg, len);
+		return -EINVAL;
+	}
+
 
 	buf[0] = MSB(reg);
 	buf[1] = LSB(reg);
@@ -879,7 +890,8 @@ static u8 stv0367_readbits(struct stv0367_state *state, u32 label)
 	return val;
 }
 
-u8 stv0367_getbits(u8 reg, u32 label)
+#if 0 /* Currently, unused */
+static u8 stv0367_getbits(u8 reg, u32 label)
 {
 	u8 mask, pos;
 
@@ -887,7 +899,7 @@ u8 stv0367_getbits(u8 reg, u32 label)
 
 	return (reg & mask) >> pos;
 }
-
+#endif
 static int stv0367ter_gate_ctrl(struct dvb_frontend *fe, int enable)
 {
 	struct stv0367_state *state = fe->demodulator_priv;
@@ -1263,8 +1275,8 @@ stv0367_ter_signal_type stv0367ter_check_cpamp(struct stv0367_state *state,
 	return CPAMPStatus;
 }
 
-enum
-stv0367_ter_signal_type stv0367ter_lock_algo(struct stv0367_state *state)
+static enum stv0367_ter_signal_type
+stv0367ter_lock_algo(struct stv0367_state *state)
 {
 	enum stv0367_ter_signal_type ret_flag;
 	short int wd, tempo;
@@ -1528,7 +1540,7 @@ static int stv0367ter_sleep(struct dvb_frontend *fe)
 	return stv0367ter_standby(fe, 1);
 }
 
-int stv0367ter_init(struct dvb_frontend *fe)
+static int stv0367ter_init(struct dvb_frontend *fe)
 {
 	struct stv0367_state *state = fe->demodulator_priv;
 	struct stv0367ter_state *ter_state = state->ter_state;
@@ -2378,9 +2390,9 @@ static u32 stv0367cab_get_adc_freq(struct dvb_frontend *fe, u32 ExtClk_Hz)
 	return ADCClk_Hz;
 }
 
-enum stv0367cab_mod stv0367cab_SetQamSize(struct stv0367_state *state,
-					u32 SymbolRate,
-					enum stv0367cab_mod QAMSize)
+static enum stv0367cab_mod stv0367cab_SetQamSize(struct stv0367_state *state,
+						 u32 SymbolRate,
+						 enum stv0367cab_mod QAMSize)
 {
 	/* Set QAM size */
 	stv0367_writebits(state, F367CAB_QAM_MODE, QAMSize);
@@ -2762,7 +2774,7 @@ static int stv0367cab_sleep(struct dvb_frontend *fe)
 	return stv0367cab_standby(fe, 1);
 }
 
-int stv0367cab_init(struct dvb_frontend *fe)
+static int stv0367cab_init(struct dvb_frontend *fe)
 {
 	struct stv0367_state *state = fe->demodulator_priv;
 	struct stv0367cab_state *cab_state = state->cab_state;
@@ -2918,7 +2930,7 @@ enum stv0367_cab_signal_type stv0367cab_algo(struct stv0367_state *state,
 	if (tuner_lock == 0)
 		return FE_367CAB_NOTUNER;
 #endif
-	/* Relase the TRL to start demodulator acquisition */
+	/* Release the TRL to start demodulator acquisition */
 	/* Wait for QAM lock */
 	LockTime = 0;
 	stv0367_writereg(state, R367CAB_CTRL_1, 0x00);

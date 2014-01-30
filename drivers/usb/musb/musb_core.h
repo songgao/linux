@@ -46,6 +46,7 @@
 #include <linux/usb.h>
 #include <linux/usb/otg.h>
 #include <linux/usb/musb.h>
+#include <linux/phy/phy.h>
 
 struct musb;
 struct musb_hw_ep;
@@ -77,27 +78,11 @@ struct musb_ep;
 #define is_peripheral_active(m)		(!(m)->is_host)
 #define is_host_active(m)		((m)->is_host)
 
-#ifdef CONFIG_PROC_FS
-#include <linux/fs.h>
-#define MUSB_CONFIG_PROC_FS
-#endif
-
-/****************************** PERIPHERAL ROLE *****************************/
-
-extern irqreturn_t musb_g_ep0_irq(struct musb *);
-extern void musb_g_tx(struct musb *, u8);
-extern void musb_g_rx(struct musb *, u8);
-extern void musb_g_reset(struct musb *);
-extern void musb_g_suspend(struct musb *);
-extern void musb_g_resume(struct musb *);
-extern void musb_g_wakeup(struct musb *);
-extern void musb_g_disconnect(struct musb *);
-
-/****************************** HOST ROLE ***********************************/
-
-extern irqreturn_t musb_h_ep0_irq(struct musb *);
-extern void musb_host_tx(struct musb *, u8);
-extern void musb_host_rx(struct musb *, u8);
+enum {
+	MUSB_PORT_MODE_HOST	= 1,
+	MUSB_PORT_MODE_GADGET,
+	MUSB_PORT_MODE_DUAL_ROLE,
+};
 
 /****************************** CONSTANTS ********************************/
 
@@ -288,7 +273,6 @@ struct musb_csr_regs {
 struct musb_context_registers {
 
 	u8 power;
-	u16 intrtxe, intrrxe;
 	u8 intrusbe;
 	u16 frame;
 	u8 index, testmode;
@@ -313,6 +297,8 @@ struct musb {
 	struct work_struct	irq_work;
 	u16			hwvers;
 
+	u16			intrrxe;
+	u16			intrtxe;
 /* this hub status bit is reserved by USB 2.0 and not seen by usbcore */
 #define MUSB_PORT_STAT_RESUME	(1 << 31)
 
@@ -356,6 +342,7 @@ struct musb {
 	u16			int_tx;
 
 	struct usb_phy		*xceiv;
+	struct phy		*phy;
 
 	int nIrq;
 	unsigned		irq_wake:1;
@@ -372,6 +359,7 @@ struct musb {
 
 	u8			min_power;	/* vbus for periph, in mA/2 */
 
+	int			port_mode;	/* MUSB_PORT_MODE_* */
 	bool			is_host;
 
 	int			a_wait_bcon;	/* VBUS timeout in msecs */
@@ -381,7 +369,6 @@ struct musb {
 	unsigned		is_active:1;
 
 	unsigned is_multipoint:1;
-	unsigned ignore_disconnect:1;	/* during bus resets */
 
 	unsigned		hb_iso_rx:1;	/* high bandwidth iso rx? */
 	unsigned		hb_iso_tx:1;	/* high bandwidth iso tx? */
@@ -418,6 +405,7 @@ struct musb {
 	enum musb_g_ep0_state	ep0_state;
 	struct usb_gadget	g;			/* the gadget */
 	struct usb_gadget_driver *gadget_driver;	/* its driver */
+	struct usb_hcd		*hcd;			/* the usb hcd */
 
 	/*
 	 * FIXME: Remove this flag.
@@ -434,9 +422,6 @@ struct musb {
 
 	struct musb_hdrc_config	*config;
 
-#ifdef MUSB_CONFIG_PROC_FS
-	struct proc_dir_entry *proc_entry;
-#endif
 	int			xceiv_old_state;
 #ifdef CONFIG_DEBUG_FS
 	struct dentry		*debugfs_root;
@@ -519,10 +504,8 @@ static inline void musb_configure_ep0(struct musb *musb)
 
 extern const char musb_driver_name[];
 
-extern void musb_start(struct musb *musb);
 extern void musb_stop(struct musb *musb);
-extern int musb_get_id(struct device *dev, gfp_t gfp_mask);
-extern void musb_put_id(struct device *dev, int id);
+extern void musb_start(struct musb *musb);
 
 extern void musb_write_fifo(struct musb_hw_ep *ep, u16 len, const u8 *src);
 extern void musb_read_fifo(struct musb_hw_ep *ep, u16 len, u8 *dst);

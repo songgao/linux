@@ -44,13 +44,16 @@ int rblist__add_node(struct rblist *rblist, const void *new_entry)
 void rblist__remove_node(struct rblist *rblist, struct rb_node *rb_node)
 {
 	rb_erase(rb_node, &rblist->entries);
+	--rblist->nr_entries;
 	rblist->node_delete(rblist, rb_node);
 }
 
-struct rb_node *rblist__find(struct rblist *rblist, const void *entry)
+static struct rb_node *__rblist__findnew(struct rblist *rblist,
+					 const void *entry,
+					 bool create)
 {
 	struct rb_node **p = &rblist->entries.rb_node;
-	struct rb_node *parent = NULL;
+	struct rb_node *parent = NULL, *new_node = NULL;
 
 	while (*p != NULL) {
 		int rc;
@@ -66,7 +69,26 @@ struct rb_node *rblist__find(struct rblist *rblist, const void *entry)
 			return parent;
 	}
 
-	return NULL;
+	if (create) {
+		new_node = rblist->node_new(rblist, entry);
+		if (new_node) {
+			rb_link_node(new_node, parent, p);
+			rb_insert_color(new_node, &rblist->entries);
+			++rblist->nr_entries;
+		}
+	}
+
+	return new_node;
+}
+
+struct rb_node *rblist__find(struct rblist *rblist, const void *entry)
+{
+	return __rblist__findnew(rblist, entry, false);
+}
+
+struct rb_node *rblist__findnew(struct rblist *rblist, const void *entry)
+{
+	return __rblist__findnew(rblist, entry, true);
 }
 
 void rblist__init(struct rblist *rblist)
@@ -87,8 +109,7 @@ void rblist__delete(struct rblist *rblist)
 		while (next) {
 			pos = next;
 			next = rb_next(pos);
-			rb_erase(pos, &rblist->entries);
-			rblist->node_delete(rblist, pos);
+			rblist__remove_node(rblist, pos);
 		}
 		free(rblist);
 	}

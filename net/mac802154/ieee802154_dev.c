@@ -174,8 +174,7 @@ ieee802154_alloc_device(size_t priv_data_len, struct ieee802154_ops *ops)
 
 	if (!ops || !ops->xmit || !ops->ed || !ops->start ||
 	    !ops->stop || !ops->set_channel) {
-		printk(KERN_ERR
-		       "undefined IEEE802.15.4 device operations\n");
+		pr_err("undefined IEEE802.15.4 device operations\n");
 		return NULL;
 	}
 
@@ -201,8 +200,7 @@ ieee802154_alloc_device(size_t priv_data_len, struct ieee802154_ops *ops)
 
 	phy = wpan_phy_alloc(priv_size);
 	if (!phy) {
-		printk(KERN_ERR
-		       "failure to allocate master IEEE802.15.4 device\n");
+		pr_err("failure to allocate master IEEE802.15.4 device\n");
 		return NULL;
 	}
 
@@ -224,9 +222,9 @@ void ieee802154_free_device(struct ieee802154_dev *hw)
 
 	BUG_ON(!list_empty(&priv->slaves));
 
-	wpan_phy_free(priv->phy);
-
 	mutex_destroy(&priv->slaves_mtx);
+
+	wpan_phy_free(priv->phy);
 }
 EXPORT_SYMBOL(ieee802154_free_device);
 

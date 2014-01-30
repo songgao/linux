@@ -517,7 +517,7 @@ int omap3isp_csi2_reset(struct isp_csi2_device *csi2)
 	} while (soft_reset_retries < 5);
 
 	if (soft_reset_retries == 5) {
-		printk(KERN_ERR "CSI2: Soft reset try count exceeded!\n");
+		dev_err(isp->dev, "CSI2: Soft reset try count exceeded!\n");
 		return -EBUSY;
 	}
 
@@ -535,8 +535,8 @@ int omap3isp_csi2_reset(struct isp_csi2_device *csi2)
 	} while (--i > 0);
 
 	if (i == 0) {
-		printk(KERN_ERR
-		       "CSI2: Reset for CSI2_96M_FCLK domain Failed!\n");
+		dev_err(isp->dev,
+			"CSI2: Reset for CSI2_96M_FCLK domain Failed!\n");
 		return -EBUSY;
 	}
 
@@ -573,7 +573,7 @@ static int csi2_configure(struct isp_csi2_device *csi2)
 	if (csi2->contexts[0].enabled || csi2->ctrl.if_enable)
 		return -EBUSY;
 
-	pad = media_entity_remote_source(&csi2->pads[CSI2_PAD_SINK]);
+	pad = media_entity_remote_pad(&csi2->pads[CSI2_PAD_SINK]);
 	sensor = media_entity_to_v4l2_subdev(pad->entity);
 	pdata = sensor->host_priv;
 

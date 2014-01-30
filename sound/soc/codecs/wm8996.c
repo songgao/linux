@@ -438,6 +438,8 @@ static int wm8996_get_retune_mobile_enum(struct snd_kcontrol *kcontrol,
 	struct wm8996_priv *wm8996 = snd_soc_codec_get_drvdata(codec);
 	int block = wm8996_get_retune_mobile_block(kcontrol->id.name);
 
+	if (block < 0)
+		return block;
 	ucontrol->value.enumerated.item[0] = wm8996->retune_mobile_cfg[block];
 
 	return 0;
@@ -608,7 +610,7 @@ static int bg_event(struct snd_soc_dapm_widget *w,
 		wm8996_bg_disable(codec);
 		break;
 	default:
-		BUG();
+		WARN(1, "Invalid event %d\n", event);
 		ret = -EINVAL;
 	}
 
@@ -625,7 +627,7 @@ static int cp_event(struct snd_soc_dapm_widget *w,
 		msleep(5);
 		break;
 	default:
-		BUG();
+		WARN(1, "Invalid event %d\n", event);
 		ret = -EINVAL;
 	}
 
@@ -646,7 +648,7 @@ static int rmv_short_event(struct snd_soc_dapm_widget *w,
 		wm8996->hpout_pending |= w->shift;
 		break;
 	default:
-		BUG();
+		WARN(1, "Invalid event %d\n", event);
 		return -EINVAL;
 	}
 
@@ -767,7 +769,7 @@ static int dcs_start(struct snd_soc_dapm_widget *w,
 		wm8996->dcs_pending |= 1 << w->shift;
 		break;
 	default:
-		BUG();
+		WARN(1, "Invalid event %d\n", event);
 		return -EINVAL;
 	}
 
@@ -1656,7 +1658,7 @@ static int wm8996_set_fmt(struct snd_soc_dai *dai, unsigned int fmt)
 		lrclk_rx_reg = WM8996_AIF2_RX_LRCLK_2;
 		break;
 	default:
-		BUG();
+		WARN(1, "Invalid dai id %d\n", dai->id);
 		return -EINVAL;
 	}
 
@@ -1768,7 +1770,7 @@ static int wm8996_hw_params(struct snd_pcm_substream *substream,
 		dsp_shift = WM8996_DSP2_DIV_SHIFT;
 		break;
 	default:
-		BUG();
+		WARN(1, "Invalid dai id %d\n", dai->id);
 		return -EINVAL;
 	}
 
@@ -2765,8 +2767,8 @@ static struct snd_soc_dai_driver wm8996_dai[] = {
 	},
 };
 
-static __devinit int wm8996_i2c_probe(struct i2c_client *i2c,
-				      const struct i2c_device_id *id)
+static int wm8996_i2c_probe(struct i2c_client *i2c,
+			    const struct i2c_device_id *id)
 {
 	struct wm8996_priv *wm8996;
 	int ret, i;
@@ -3077,7 +3079,7 @@ err:
 	return ret;
 }
 
-static __devexit int wm8996_i2c_remove(struct i2c_client *client)
+static int wm8996_i2c_remove(struct i2c_client *client)
 {
 	struct wm8996_priv *wm8996 = i2c_get_clientdata(client);
 	int i;
@@ -3107,7 +3109,7 @@ static struct i2c_driver wm8996_i2c_driver = {
 		.owner = THIS_MODULE,
 	},
 	.probe =    wm8996_i2c_probe,
-	.remove =   __devexit_p(wm8996_i2c_remove),
+	.remove =   wm8996_i2c_remove,
 	.id_table = wm8996_i2c_id,
 };
 

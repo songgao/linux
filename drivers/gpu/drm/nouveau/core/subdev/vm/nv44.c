@@ -163,7 +163,8 @@ nv44_vmmgr_ctor(struct nouveau_object *parent, struct nouveau_object *engine,
 	struct nv04_vmmgr_priv *priv;
 	int ret;
 
-	if (!nouveau_boolopt(device->cfgopt, "NvPCIE", true)) {
+	if (pci_find_capability(device->pdev, PCI_CAP_ID_AGP) ||
+	    !nouveau_boolopt(device->cfgopt, "NvPCIE", true)) {
 		return nouveau_object_ctor(parent, engine, &nv04_vmmgr_oclass,
 					   data, size, pobject);
 	}
@@ -195,7 +196,7 @@ nv44_vmmgr_ctor(struct nouveau_object *parent, struct nouveau_object *engine,
 	if (ret)
 		return ret;
 
-	ret = nouveau_gpuobj_new(parent, NULL,
+	ret = nouveau_gpuobj_new(nv_object(priv), NULL,
 				(NV44_GART_SIZE / NV44_GART_PAGE) * 4,
 				 512 * 1024, NVOBJ_FLAG_ZERO_ALLOC,
 				 &priv->vm->pgt[0].obj[0]);

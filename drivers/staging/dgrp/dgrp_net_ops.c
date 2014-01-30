@@ -35,8 +35,9 @@
 
 #include <linux/module.h>
 #include <linux/proc_fs.h>
-#include <linux/types.h>
+#include <linux/slab.h>
 #include <linux/string.h>
+#include <linux/device.h>
 #include <linux/tty.h>
 #include <linux/tty_flip.h>
 #include <linux/spinlock.h>
@@ -71,7 +72,7 @@ static long dgrp_net_ioctl(struct file *file, unsigned int cmd,
 static unsigned int dgrp_net_select(struct file *file,
 				    struct poll_table_struct *table);
 
-static const struct file_operations net_ops = {
+const struct file_operations dgrp_net_ops = {
 	.owner   =  THIS_MODULE,
 	.read    =  dgrp_net_read,
 	.write   =  dgrp_net_write,
@@ -80,23 +81,6 @@ static const struct file_operations net_ops = {
 	.open    =  dgrp_net_open,
 	.release =  dgrp_net_release,
 };
-
-static struct inode_operations net_inode_ops = {
-	.permission = dgrp_inode_permission
-};
-
-void dgrp_register_net_hook(struct proc_dir_entry *de)
-{
-	struct nd_struct *node = de->data;
-
-	de->proc_iops = &net_inode_ops;
-	de->proc_fops = &net_ops;
-	node->nd_net_de = de;
-	sema_init(&node->nd_net_semaphore, 1);
-	node->nd_state = NS_CLOSED;
-	dgrp_create_node_class_sysfs_files(node);
-}
-
 
 /**
  * dgrp_dump() -- prints memory for debugging purposes.
@@ -151,20 +135,15 @@ static void dgrp_read_data_block(struct ch_struct *ch, u8 *flipbuf,
  * Copys the rbuf to the flipbuf and sends to line discipline.
  * Sends input buffer data to the line discipline.
  *
- * There are several modes to consider here:
- *    rawreadok, tty->real_raw, and IF_PARMRK
  */
 static void dgrp_input(struct ch_struct *ch)
 {
 	struct nd_struct *nd;
 	struct tty_struct *tty;
-	int remain;
 	int data_len;
 	int len;
-	int flip_len;
 	int tty_count;
 	ulong lock_flags;
-	struct tty_ldisc *ld;
 	u8  *myflipbuf;
 	u8  *myflipflagbuf;
 
@@ -212,37 +191,11 @@ static void dgrp_input(struct ch_struct *ch)
 
 	spin_unlock_irqrestore(&nd->nd_lock, lock_flags);
 
-	/* Decide how much data we can send into the tty layer */
-	if (dgrp_rawreadok && tty->real_raw)
-		flip_len = MYFLIPLEN;
-	else
-		flip_len = TTY_FLIPBUF_SIZE;
-
 	/* data_len should be the number of chars that we read in */
 	data_len = (ch->ch_rin - ch->ch_rout) & RBUF_MASK;
-	remain = data_len;
 
 	/* len is the amount of data we are going to transfer here */
-	len = min(data_len, flip_len);
-
-	/* take into consideration length of ldisc */
-	len = min(len, (N_TTY_BUF_SIZE - 1) - tty->read_cnt);
-
-	ld = tty_ldisc_ref(tty);
-
-	/*
-	 * If we were unable to get a reference to the ld,
-	 * don't flush our buffer, and act like the ld doesn't
-	 * have any space to put the data right now.
-	 */
-	if (!ld) {
-		len = 0;
-	} else if (!ld->ops->receive_buf) {
-		spin_lock_irqsave(&nd->nd_lock, lock_flags);
-		ch->ch_rout = ch->ch_rin;
-		spin_unlock_irqrestore(&nd->nd_lock, lock_flags);
-		len = 0;
-	}
+	len = tty_buffer_request_room(&ch->port, data_len);
 
 	/* Check DPA flow control */
 	if ((nd->nd_dpa_debug) &&
@@ -254,41 +207,21 @@ static void dgrp_input(struct ch_struct *ch)
 
 		dgrp_read_data_block(ch, myflipbuf, len);
 
-		/*
-		 * In high performance mode, we don't have to update
-		 * flag_buf or any of the counts or pointers into flip buf.
-		 */
-		if (!dgrp_rawreadok || !tty->real_raw) {
-			if (I_PARMRK(tty) || I_BRKINT(tty) || I_INPCK(tty))
-				parity_scan(ch, myflipbuf, myflipflagbuf, &len);
-			else
-				memset(myflipflagbuf, TTY_NORMAL, len);
-		}
+		if (I_PARMRK(tty) || I_BRKINT(tty) || I_INPCK(tty))
+			parity_scan(ch, myflipbuf, myflipflagbuf, &len);
+		else
+			memset(myflipflagbuf, TTY_NORMAL, len);
 
 		if ((nd->nd_dpa_debug) &&
 		    (nd->nd_dpa_port == PORT_NUM(MINOR(tty_devnum(tty)))))
 			dgrp_dpa_data(nd, 1, myflipbuf, len);
 
-		/*
-		 * If we're doing raw reads, jam it right into the
-		 * line disc bypassing the flip buffers.
-		 */
-		if (dgrp_rawreadok && tty->real_raw)
-			ld->ops->receive_buf(tty, myflipbuf, NULL, len);
-		else {
-			len = tty_buffer_request_room(tty, len);
-			tty_insert_flip_string_flags(tty, myflipbuf,
-						     myflipflagbuf, len);
-
-			/* Tell the tty layer its okay to "eat" the data now */
-			tty_flip_buffer_push(tty);
-		}
+		tty_insert_flip_string_flags(&ch->port, myflipbuf,
+					     myflipflagbuf, len);
+		tty_flip_buffer_push(&ch->port);
 
 		ch->ch_rxcount += len;
 	}
-
-	if (ld)
-		tty_ldisc_deref(ld);
 
 	/*
 	 * Wake up any sleepers (maybe dgrp close) that might be waiting
@@ -345,7 +278,7 @@ static void parity_scan(struct ch_struct *ch, unsigned char *cbuf,
 		switch (ch->ch_pscan_state) {
 		default:
 			/* reset to sanity and fall through */
-			ch->ch_pscan_state = 0 ;
+			ch->ch_pscan_state = 0;
 
 		case 0:
 			/* No FF seen yet */
@@ -851,7 +784,6 @@ out_err:
 static int dgrp_net_open(struct inode *inode, struct file *file)
 {
 	struct nd_struct *nd;
-	struct proc_dir_entry *de;
 	ulong  lock_flags;
 	int rtn;
 
@@ -875,13 +807,7 @@ static int dgrp_net_open(struct inode *inode, struct file *file)
 	/*
 	 *  Get the node pointer, and fail if it doesn't exist.
 	 */
-	de = PDE(inode);
-	if (!de) {
-		rtn = -ENXIO;
-		goto done;
-	}
-
-	nd = (struct nd_struct *) de->data;
+	nd = PDE_DATA(inode);
 	if (!nd) {
 		rtn = -ENXIO;
 		goto done;
@@ -1057,13 +983,13 @@ static int dgrp_net_release(struct inode *inode, struct file *file)
 
 	spin_unlock_irqrestore(&dgrp_poll_data.poll_lock, lock_flags);
 
-done:
 	down(&nd->nd_net_semaphore);
 
 	dgrp_monitor_message(nd, "Net Close");
 
 	up(&nd->nd_net_semaphore);
 
+done:
 	module_put(THIS_MODULE);
 	file->private_data = NULL;
 	return 0;
@@ -1671,6 +1597,9 @@ static int dgrp_send(struct nd_struct *nd, long tmax)
 				 * do the job.
 				 */
 
+				/* FIXME: jiffies - ch->ch_waketime can never
+				   be < 0. Someone needs to work out what is
+				   actually intended here */
 				if (ch->ch_pun.un_open_count &&
 				    (ch->ch_pun.un_flag &
 				    (UN_EMPTY|UN_TIME|UN_LOW|UN_PWAIT)) != 0) {
@@ -1678,7 +1607,7 @@ static int dgrp_send(struct nd_struct *nd, long tmax)
 					if ((ch->ch_pun.un_flag & UN_LOW) != 0 ?
 					    (n <= TBUF_LOW) :
 					    (ch->ch_pun.un_flag & UN_TIME) != 0 ?
-					    ((jiffies - ch->ch_waketime) >= 0) :
+					    time_is_before_jiffies(ch->ch_waketime) :
 					    (n == 0 && ch->ch_s_tpos == ch->ch_s_tin) &&
 					    ((ch->ch_pun.un_flag & UN_EMPTY) != 0 ||
 					    ((ch->ch_tun.un_open_count &&
@@ -2546,7 +2475,7 @@ data:
 
 			/*
 			 *  Fabricate and insert a data packet header to
-			 *  preceed the remaining data when it comes in.
+			 *  preced the remaining data when it comes in.
 			 */
 
 			if (remain < plen) {
@@ -2715,7 +2644,7 @@ data:
 						}
 
 						/*
-						 *  Handle delayed response arrival preceeding
+						 *  Handle delayed response arrival preceding
 						 *  the open response we are waiting for.
 						 */
 
@@ -3004,9 +2933,9 @@ check_query:
 			    I_BRKINT(ch->ch_tun.un_tty) &&
 			    !(I_IGNBRK(ch->ch_tun.un_tty))) {
 
-				tty_buffer_request_room(ch->ch_tun.un_tty, 1);
-				tty_insert_flip_char(ch->ch_tun.un_tty, 0, TTY_BREAK);
-				tty_flip_buffer_push(ch->ch_tun.un_tty);
+				tty_buffer_request_room(&ch->port, 1);
+				tty_insert_flip_char(&ch->port, 0, TTY_BREAK);
+				tty_flip_buffer_push(&ch->port);
 
 			}
 
@@ -3154,7 +3083,7 @@ check_query:
 						nd->nd_hw_ver = (b[8] << 8) | b[9];
 						nd->nd_sw_ver = (b[10] << 8) | b[11];
 						nd->nd_hw_id = b[6];
-						desclen = ((plen - 12) > MAX_DESC_LEN) ? MAX_DESC_LEN :
+						desclen = (plen - 12 > MAX_DESC_LEN - 1) ? MAX_DESC_LEN - 1 :
 							plen - 12;
 
 						if (desclen <= 0) {
@@ -3452,7 +3381,7 @@ static long dgrp_net_ioctl(struct file *file, unsigned int cmd,
 		if (size != sizeof(struct link_struct))
 			return -EINVAL;
 
-		if (copy_from_user((void *)(&link), (void __user *) arg, size))
+		if (copy_from_user(&link, (void __user *)arg, size))
 			return -EFAULT;
 
 		if (link.lk_fast_rate < 9600)
@@ -3553,7 +3482,7 @@ void dgrp_poll_handler(unsigned long arg)
 		/*
 		 * Decrement statistics.  These are only for use with
 		 * KME, so don't worry that the operations are done
-		 * unlocked, and so the results are occassionally wrong.
+		 * unlocked, and so the results are occasionally wrong.
 		 */
 
 		nd->nd_read_count -= (nd->nd_read_count +

@@ -44,7 +44,7 @@ static const struct nla_policy nat_policy[TCA_NAT_MAX + 1] = {
 	[TCA_NAT_PARMS]	= { .len = sizeof(struct tc_nat) },
 };
 
-static int tcf_nat_init(struct nlattr *nla, struct nlattr *est,
+static int tcf_nat_init(struct net *net, struct nlattr *nla, struct nlattr *est,
 			struct tc_action *a, int ovr, int bind)
 {
 	struct nlattr *tb[TCA_NAT_MAX + 1];
@@ -70,15 +70,15 @@ static int tcf_nat_init(struct nlattr *nla, struct nlattr *est,
 				     &nat_idx_gen, &nat_hash_info);
 		if (IS_ERR(pc))
 			return PTR_ERR(pc);
-		p = to_tcf_nat(pc);
 		ret = ACT_P_CREATED;
 	} else {
-		p = to_tcf_nat(pc);
-		if (!ovr) {
-			tcf_hash_release(pc, bind, &nat_hash_info);
+		if (bind)
+			return 0;
+		tcf_hash_release(pc, bind, &nat_hash_info);
+		if (!ovr)
 			return -EEXIST;
-		}
 	}
+	p = to_tcf_nat(pc);
 
 	spin_lock_bh(&p->tcf_lock);
 	p->old_addr = parm->old_addr;
@@ -308,9 +308,7 @@ static struct tc_action_ops act_nat_ops = {
 	.act		=	tcf_nat,
 	.dump		=	tcf_nat_dump,
 	.cleanup	=	tcf_nat_cleanup,
-	.lookup		=	tcf_hash_search,
 	.init		=	tcf_nat_init,
-	.walk		=	tcf_generic_walker
 };
 
 MODULE_DESCRIPTION("Stateless NAT actions");

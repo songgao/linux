@@ -25,20 +25,32 @@
 /*
  * Hardware page table definitions.
  *
+ * Level 1 descriptor (PUD).
+ */
+
+#define PUD_TABLE_BIT		(_AT(pgdval_t, 1) << 1)
+
+/*
  * Level 2 descriptor (PMD).
  */
 #define PMD_TYPE_MASK		(_AT(pmdval_t, 3) << 0)
 #define PMD_TYPE_FAULT		(_AT(pmdval_t, 0) << 0)
 #define PMD_TYPE_TABLE		(_AT(pmdval_t, 3) << 0)
 #define PMD_TYPE_SECT		(_AT(pmdval_t, 1) << 0)
+#define PMD_TABLE_BIT		(_AT(pmdval_t, 1) << 1)
 
 /*
  * Section
  */
+#define PMD_SECT_VALID		(_AT(pmdval_t, 1) << 0)
+#define PMD_SECT_PROT_NONE	(_AT(pmdval_t, 1) << 58)
+#define PMD_SECT_USER		(_AT(pmdval_t, 1) << 6)		/* AP[1] */
+#define PMD_SECT_RDONLY		(_AT(pmdval_t, 1) << 7)		/* AP[2] */
 #define PMD_SECT_S		(_AT(pmdval_t, 3) << 8)
 #define PMD_SECT_AF		(_AT(pmdval_t, 1) << 10)
 #define PMD_SECT_NG		(_AT(pmdval_t, 1) << 11)
-#define PMD_SECT_XN		(_AT(pmdval_t, 1) << 54)
+#define PMD_SECT_PXN		(_AT(pmdval_t, 1) << 53)
+#define PMD_SECT_UXN		(_AT(pmdval_t, 1) << 54)
 
 /*
  * AttrIndx[2:0] encoding (mapping attributes defined in the MAIR* registers).
@@ -52,18 +64,40 @@
 #define PTE_TYPE_MASK		(_AT(pteval_t, 3) << 0)
 #define PTE_TYPE_FAULT		(_AT(pteval_t, 0) << 0)
 #define PTE_TYPE_PAGE		(_AT(pteval_t, 3) << 0)
+#define PTE_TABLE_BIT		(_AT(pteval_t, 1) << 1)
 #define PTE_USER		(_AT(pteval_t, 1) << 6)		/* AP[1] */
 #define PTE_RDONLY		(_AT(pteval_t, 1) << 7)		/* AP[2] */
 #define PTE_SHARED		(_AT(pteval_t, 3) << 8)		/* SH[1:0], inner shareable */
 #define PTE_AF			(_AT(pteval_t, 1) << 10)	/* Access Flag */
 #define PTE_NG			(_AT(pteval_t, 1) << 11)	/* nG */
-#define PTE_XN			(_AT(pteval_t, 1) << 54)	/* XN */
+#define PTE_PXN			(_AT(pteval_t, 1) << 53)	/* Privileged XN */
+#define PTE_UXN			(_AT(pteval_t, 1) << 54)	/* User XN */
 
 /*
  * AttrIndx[2:0] encoding (mapping attributes defined in the MAIR* registers).
  */
 #define PTE_ATTRINDX(t)		(_AT(pteval_t, (t)) << 2)
 #define PTE_ATTRINDX_MASK	(_AT(pteval_t, 7) << 2)
+
+/*
+ * 2nd stage PTE definitions
+ */
+#define PTE_S2_RDONLY		(_AT(pteval_t, 1) << 6)   /* HAP[2:1] */
+#define PTE_S2_RDWR		(_AT(pteval_t, 3) << 6)   /* HAP[2:1] */
+
+#define PMD_S2_RDWR		(_AT(pmdval_t, 3) << 6)   /* HAP[2:1] */
+
+/*
+ * Memory Attribute override for Stage-2 (MemAttr[3:0])
+ */
+#define PTE_S2_MEMATTR(t)	(_AT(pteval_t, (t)) << 2)
+#define PTE_S2_MEMATTR_MASK	(_AT(pteval_t, 0xf) << 2)
+
+/*
+ * EL2/HYP PTE/PMD definitions
+ */
+#define PMD_HYP			PMD_SECT_USER
+#define PTE_HYP			PTE_USER
 
 /*
  * 40-bit physical address supported.
@@ -90,5 +124,6 @@
 #define TCR_TG1_64K		(UL(1) << 30)
 #define TCR_IPS_40BIT		(UL(2) << 32)
 #define TCR_ASID16		(UL(1) << 36)
+#define TCR_TBI0		(UL(1) << 37)
 
 #endif

@@ -2,7 +2,7 @@
 	This file contains wireless extension handlers.
 
 	This is part of rtl8180 OpenSource driver.
-	Copyright (C) Andrea Merello 2004-2005  <andreamrl@tiscali.it>
+	Copyright (C) Andrea Merello 2004-2005  <andrea.merello@gmail.com>
 	Released under the terms of GPL (General Public Licence)
 
 	Parts of this driver are based on the GPL part
@@ -50,16 +50,15 @@ static int r8180_wx_get_freq(struct net_device *dev,
 }
 
 
-int r8180_wx_set_key(struct net_device *dev, struct iw_request_info *info,
-		     union iwreq_data *wrqu, char *key)
+static int r8180_wx_set_key(struct net_device *dev,
+			    struct iw_request_info *info,
+			    union iwreq_data *wrqu, char *key)
 {
 	struct r8180_priv *priv = ieee80211_priv(dev);
 	struct iw_point *erq = &(wrqu->encoding);
 
 	if (priv->ieee80211->bHwRadioOff)
 		return 0;
-
-	if (erq->flags & IW_ENCODE_DISABLED)
 
 	if (erq->length > 0) {
 		u32* tkey = (u32*) key;
@@ -1148,12 +1147,12 @@ static int r8180_wx_set_gen_ie(struct net_device *dev,
 	if (priv->ieee80211->bHwRadioOff)
 		return 0;
 
-		down(&priv->wx_sem);
+	down(&priv->wx_sem);
 #if 1
-		ret = ieee80211_wx_set_gen_ie(priv->ieee80211, extra, wrqu->data.length);
+	ret = ieee80211_wx_set_gen_ie(priv->ieee80211, extra, wrqu->data.length);
 #endif
-		up(&priv->wx_sem);
-		return ret;
+	up(&priv->wx_sem);
+	return ret;
 
 
 }

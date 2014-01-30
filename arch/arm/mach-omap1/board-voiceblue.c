@@ -26,6 +26,7 @@
 #include <linux/serial_reg.h>
 #include <linux/smc91x.h>
 #include <linux/export.h>
+#include <linux/reboot.h>
 
 #include <asm/mach-types.h>
 #include <asm/mach/arch.h>
@@ -34,7 +35,7 @@
 #include <mach/board-voiceblue.h>
 #include <mach/flash.h>
 #include <mach/mux.h>
-#include <plat/tc.h>
+#include <mach/tc.h>
 
 #include <mach/hardware.h>
 #include <mach/usb.h>
@@ -215,7 +216,7 @@ void voiceblue_wdt_ping(void)
 	gpio_set_value(0, wdt_gpio_state);
 }
 
-static void voiceblue_restart(char mode, const char *cmd)
+static void voiceblue_restart(enum reboot_mode mode, const char *cmd)
 {
 	/*
 	 * Workaround for 5912/1611b bug mentioned in sprz209d.pdf p. 28
@@ -286,10 +287,9 @@ MACHINE_START(VOICEBLUE, "VoiceBlue OMAP5910")
 	.atag_offset	= 0x100,
 	.map_io		= omap15xx_map_io,
 	.init_early     = omap1_init_early,
-	.reserve	= omap_reserve,
 	.init_irq	= omap1_init_irq,
 	.init_machine	= voiceblue_init,
 	.init_late	= omap1_init_late,
-	.timer		= &omap1_timer,
+	.init_time	= omap1_timer_init,
 	.restart	= voiceblue_restart,
 MACHINE_END

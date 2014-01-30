@@ -36,9 +36,9 @@
 #include <asm/uaccess.h>
 #include <asm/unaligned.h>
 #include <linux/filter.h>
-#include <linux/reciprocal_div.h>
 #include <linux/ratelimit.h>
 #include <linux/seccomp.h>
+#include <linux/if_vlan.h>
 
 /* No hurry in this branch
  *
@@ -165,7 +165,7 @@ unsigned int sk_run_filter(const struct sk_buff *skb,
 			A /= X;
 			continue;
 		case BPF_S_ALU_DIV_K:
-			A = reciprocal_divide(A, K);
+			A /= K;
 			continue;
 		case BPF_S_ALU_MOD_X:
 			if (X == 0)
@@ -340,6 +340,15 @@ load_b:
 			continue;
 		case BPF_S_ANC_CPU:
 			A = raw_smp_processor_id();
+			continue;
+		case BPF_S_ANC_VLAN_TAG:
+			A = vlan_tx_tag_get(skb);
+			continue;
+		case BPF_S_ANC_VLAN_TAG_PRESENT:
+			A = !!vlan_tx_tag_present(skb);
+			continue;
+		case BPF_S_ANC_PAY_OFFSET:
+			A = __skb_get_poff(skb);
 			continue;
 		case BPF_S_ANC_NLATTR: {
 			struct nlattr *nla;
@@ -525,6 +534,7 @@ int sk_chk_filter(struct sock_filter *filter, unsigned int flen)
 		[BPF_JMP|BPF_JSET|BPF_X] = BPF_S_JMP_JSET_X,
 	};
 	int pc;
+	bool anc_found;
 
 	if (flen == 0 || flen > BPF_MAXINSNS)
 		return -EINVAL;
@@ -542,11 +552,6 @@ int sk_chk_filter(struct sock_filter *filter, unsigned int flen)
 		/* Some instructions need special checks */
 		switch (code) {
 		case BPF_S_ALU_DIV_K:
-			/* check for division by zero */
-			if (ftest->k == 0)
-				return -EINVAL;
-			ftest->k = reciprocal_value(ftest->k);
-			break;
 		case BPF_S_ALU_MOD_K:
 			/* check for division by zero */
 			if (ftest->k == 0)
@@ -585,8 +590,10 @@ int sk_chk_filter(struct sock_filter *filter, unsigned int flen)
 		case BPF_S_LD_W_ABS:
 		case BPF_S_LD_H_ABS:
 		case BPF_S_LD_B_ABS:
+			anc_found = false;
 #define ANCILLARY(CODE) case SKF_AD_OFF + SKF_AD_##CODE:	\
 				code = BPF_S_ANC_##CODE;	\
+				anc_found = true;		\
 				break
 			switch (ftest->k) {
 			ANCILLARY(PROTOCOL);
@@ -600,7 +607,14 @@ int sk_chk_filter(struct sock_filter *filter, unsigned int flen)
 			ANCILLARY(RXHASH);
 			ANCILLARY(CPU);
 			ANCILLARY(ALU_XOR_X);
+			ANCILLARY(VLAN_TAG);
+			ANCILLARY(VLAN_TAG_PRESENT);
+			ANCILLARY(PAY_OFFSET);
 			}
+
+			/* ancillary operation unknown or unsupported */
+			if (anc_found == false && ftest->k >= SKF_AD_OFF)
+				return -EINVAL;
 		}
 		ftest->code = code;
 	}
@@ -624,7 +638,6 @@ void sk_filter_release_rcu(struct rcu_head *rcu)
 	struct sk_filter *fp = container_of(rcu, struct sk_filter, rcu);
 
 	bpf_jit_free(fp);
-	kfree(fp);
 }
 EXPORT_SYMBOL(sk_filter_release_rcu);
 
@@ -663,7 +676,7 @@ int sk_unattached_filter_create(struct sk_filter **pfp,
 	if (fprog->filter == NULL)
 		return -EINVAL;
 
-	fp = kmalloc(fsize + sizeof(*fp), GFP_KERNEL);
+	fp = kmalloc(sk_filter_size(fprog->len), GFP_KERNEL);
 	if (!fp)
 		return -ENOMEM;
 	memcpy(fp->insns, fprog->filter, fsize);
@@ -703,17 +716,21 @@ int sk_attach_filter(struct sock_fprog *fprog, struct sock *sk)
 {
 	struct sk_filter *fp, *old_fp;
 	unsigned int fsize = sizeof(struct sock_filter) * fprog->len;
+	unsigned int sk_fsize = sk_filter_size(fprog->len);
 	int err;
+
+	if (sock_flag(sk, SOCK_FILTER_LOCKED))
+		return -EPERM;
 
 	/* Make sure new filter is there and in the right amounts. */
 	if (fprog->filter == NULL)
 		return -EINVAL;
 
-	fp = sock_kmalloc(sk, fsize+sizeof(*fp), GFP_KERNEL);
+	fp = sock_kmalloc(sk, sk_fsize, GFP_KERNEL);
 	if (!fp)
 		return -ENOMEM;
 	if (copy_from_user(fp->insns, fprog->filter, fsize)) {
-		sock_kfree_s(sk, fp, fsize+sizeof(*fp));
+		sock_kfree_s(sk, fp, sk_fsize);
 		return -EFAULT;
 	}
 
@@ -741,6 +758,9 @@ int sk_detach_filter(struct sock *sk)
 	int ret = -ENOENT;
 	struct sk_filter *filter;
 
+	if (sock_flag(sk, SOCK_FILTER_LOCKED))
+		return -EPERM;
+
 	filter = rcu_dereference_protected(sk->sk_filter,
 					   sock_owned_by_user(sk));
 	if (filter) {
@@ -751,3 +771,114 @@ int sk_detach_filter(struct sock *sk)
 	return ret;
 }
 EXPORT_SYMBOL_GPL(sk_detach_filter);
+
+void sk_decode_filter(struct sock_filter *filt, struct sock_filter *to)
+{
+	static const u16 decodes[] = {
+		[BPF_S_ALU_ADD_K]	= BPF_ALU|BPF_ADD|BPF_K,
+		[BPF_S_ALU_ADD_X]	= BPF_ALU|BPF_ADD|BPF_X,
+		[BPF_S_ALU_SUB_K]	= BPF_ALU|BPF_SUB|BPF_K,
+		[BPF_S_ALU_SUB_X]	= BPF_ALU|BPF_SUB|BPF_X,
+		[BPF_S_ALU_MUL_K]	= BPF_ALU|BPF_MUL|BPF_K,
+		[BPF_S_ALU_MUL_X]	= BPF_ALU|BPF_MUL|BPF_X,
+		[BPF_S_ALU_DIV_X]	= BPF_ALU|BPF_DIV|BPF_X,
+		[BPF_S_ALU_MOD_K]	= BPF_ALU|BPF_MOD|BPF_K,
+		[BPF_S_ALU_MOD_X]	= BPF_ALU|BPF_MOD|BPF_X,
+		[BPF_S_ALU_AND_K]	= BPF_ALU|BPF_AND|BPF_K,
+		[BPF_S_ALU_AND_X]	= BPF_ALU|BPF_AND|BPF_X,
+		[BPF_S_ALU_OR_K]	= BPF_ALU|BPF_OR|BPF_K,
+		[BPF_S_ALU_OR_X]	= BPF_ALU|BPF_OR|BPF_X,
+		[BPF_S_ALU_XOR_K]	= BPF_ALU|BPF_XOR|BPF_K,
+		[BPF_S_ALU_XOR_X]	= BPF_ALU|BPF_XOR|BPF_X,
+		[BPF_S_ALU_LSH_K]	= BPF_ALU|BPF_LSH|BPF_K,
+		[BPF_S_ALU_LSH_X]	= BPF_ALU|BPF_LSH|BPF_X,
+		[BPF_S_ALU_RSH_K]	= BPF_ALU|BPF_RSH|BPF_K,
+		[BPF_S_ALU_RSH_X]	= BPF_ALU|BPF_RSH|BPF_X,
+		[BPF_S_ALU_NEG]		= BPF_ALU|BPF_NEG,
+		[BPF_S_LD_W_ABS]	= BPF_LD|BPF_W|BPF_ABS,
+		[BPF_S_LD_H_ABS]	= BPF_LD|BPF_H|BPF_ABS,
+		[BPF_S_LD_B_ABS]	= BPF_LD|BPF_B|BPF_ABS,
+		[BPF_S_ANC_PROTOCOL]	= BPF_LD|BPF_B|BPF_ABS,
+		[BPF_S_ANC_PKTTYPE]	= BPF_LD|BPF_B|BPF_ABS,
+		[BPF_S_ANC_IFINDEX]	= BPF_LD|BPF_B|BPF_ABS,
+		[BPF_S_ANC_NLATTR]	= BPF_LD|BPF_B|BPF_ABS,
+		[BPF_S_ANC_NLATTR_NEST]	= BPF_LD|BPF_B|BPF_ABS,
+		[BPF_S_ANC_MARK]	= BPF_LD|BPF_B|BPF_ABS,
+		[BPF_S_ANC_QUEUE]	= BPF_LD|BPF_B|BPF_ABS,
+		[BPF_S_ANC_HATYPE]	= BPF_LD|BPF_B|BPF_ABS,
+		[BPF_S_ANC_RXHASH]	= BPF_LD|BPF_B|BPF_ABS,
+		[BPF_S_ANC_CPU]		= BPF_LD|BPF_B|BPF_ABS,
+		[BPF_S_ANC_ALU_XOR_X]	= BPF_LD|BPF_B|BPF_ABS,
+		[BPF_S_ANC_SECCOMP_LD_W] = BPF_LD|BPF_B|BPF_ABS,
+		[BPF_S_ANC_VLAN_TAG]	= BPF_LD|BPF_B|BPF_ABS,
+		[BPF_S_ANC_VLAN_TAG_PRESENT] = BPF_LD|BPF_B|BPF_ABS,
+		[BPF_S_ANC_PAY_OFFSET]	= BPF_LD|BPF_B|BPF_ABS,
+		[BPF_S_LD_W_LEN]	= BPF_LD|BPF_W|BPF_LEN,
+		[BPF_S_LD_W_IND]	= BPF_LD|BPF_W|BPF_IND,
+		[BPF_S_LD_H_IND]	= BPF_LD|BPF_H|BPF_IND,
+		[BPF_S_LD_B_IND]	= BPF_LD|BPF_B|BPF_IND,
+		[BPF_S_LD_IMM]		= BPF_LD|BPF_IMM,
+		[BPF_S_LDX_W_LEN]	= BPF_LDX|BPF_W|BPF_LEN,
+		[BPF_S_LDX_B_MSH]	= BPF_LDX|BPF_B|BPF_MSH,
+		[BPF_S_LDX_IMM]		= BPF_LDX|BPF_IMM,
+		[BPF_S_MISC_TAX]	= BPF_MISC|BPF_TAX,
+		[BPF_S_MISC_TXA]	= BPF_MISC|BPF_TXA,
+		[BPF_S_RET_K]		= BPF_RET|BPF_K,
+		[BPF_S_RET_A]		= BPF_RET|BPF_A,
+		[BPF_S_ALU_DIV_K]	= BPF_ALU|BPF_DIV|BPF_K,
+		[BPF_S_LD_MEM]		= BPF_LD|BPF_MEM,
+		[BPF_S_LDX_MEM]		= BPF_LDX|BPF_MEM,
+		[BPF_S_ST]		= BPF_ST,
+		[BPF_S_STX]		= BPF_STX,
+		[BPF_S_JMP_JA]		= BPF_JMP|BPF_JA,
+		[BPF_S_JMP_JEQ_K]	= BPF_JMP|BPF_JEQ|BPF_K,
+		[BPF_S_JMP_JEQ_X]	= BPF_JMP|BPF_JEQ|BPF_X,
+		[BPF_S_JMP_JGE_K]	= BPF_JMP|BPF_JGE|BPF_K,
+		[BPF_S_JMP_JGE_X]	= BPF_JMP|BPF_JGE|BPF_X,
+		[BPF_S_JMP_JGT_K]	= BPF_JMP|BPF_JGT|BPF_K,
+		[BPF_S_JMP_JGT_X]	= BPF_JMP|BPF_JGT|BPF_X,
+		[BPF_S_JMP_JSET_K]	= BPF_JMP|BPF_JSET|BPF_K,
+		[BPF_S_JMP_JSET_X]	= BPF_JMP|BPF_JSET|BPF_X,
+	};
+	u16 code;
+
+	code = filt->code;
+
+	to->code = decodes[code];
+	to->jt = filt->jt;
+	to->jf = filt->jf;
+	to->k = filt->k;
+}
+
+int sk_get_filter(struct sock *sk, struct sock_filter __user *ubuf, unsigned int len)
+{
+	struct sk_filter *filter;
+	int i, ret;
+
+	lock_sock(sk);
+	filter = rcu_dereference_protected(sk->sk_filter,
+			sock_owned_by_user(sk));
+	ret = 0;
+	if (!filter)
+		goto out;
+	ret = filter->len;
+	if (!len)
+		goto out;
+	ret = -EINVAL;
+	if (len < filter->len)
+		goto out;
+
+	ret = -EFAULT;
+	for (i = 0; i < filter->len; i++) {
+		struct sock_filter fb;
+
+		sk_decode_filter(&filter->insns[i], &fb);
+		if (copy_to_user(&ubuf[i], &fb, sizeof(fb)))
+			goto out;
+	}
+
+	ret = filter->len;
+out:
+	release_sock(sk);
+	return ret;
+}

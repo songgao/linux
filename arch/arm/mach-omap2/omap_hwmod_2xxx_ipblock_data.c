@@ -8,13 +8,13 @@
  * it under the terms of the GNU General Public License version 2 as
  * published by the Free Software Foundation.
  */
-#include <plat/omap_hwmod.h>
-#include <plat/serial.h>
+
 #include <linux/platform_data/gpio-omap.h>
-#include <plat/dma.h>
+#include <linux/omap-dma.h>
 #include <plat/dmtimer.h>
 #include <linux/platform_data/spi-omap2-mcspi.h>
 
+#include "omap_hwmod.h"
 #include "omap_hwmod_common_data.h"
 #include "cm-regbits-24xx.h"
 #include "prm-regbits-24xx.h"
@@ -58,8 +58,9 @@ static struct omap_hwmod_class_sysconfig omap2xxx_timer_sysc = {
 	.syss_offs	= 0x0014,
 	.sysc_flags	= (SYSC_HAS_SIDLEMODE | SYSC_HAS_CLOCKACTIVITY |
 			   SYSC_HAS_ENAWAKEUP | SYSC_HAS_SOFTRESET |
-			   SYSC_HAS_AUTOIDLE),
+			   SYSC_HAS_AUTOIDLE | SYSS_HAS_RESET_STATUS),
 	.idlemodes	= (SIDLE_FORCE | SIDLE_NO | SIDLE_SMART),
+	.clockact       = CLOCKACT_TEST_ICLK,
 	.sysc_fields	= &omap_hwmod_sysc_type1,
 };
 
@@ -268,6 +269,7 @@ struct omap_hwmod omap2xxx_timer1_hwmod = {
 	},
 	.dev_attr	= &capability_alwon_dev_attr,
 	.class		= &omap2xxx_timer_hwmod_class,
+	.flags          = HWMOD_SET_DEFAULT_CLOCKACT,
 };
 
 /* timer2 */
@@ -286,6 +288,7 @@ struct omap_hwmod omap2xxx_timer2_hwmod = {
 		},
 	},
 	.class		= &omap2xxx_timer_hwmod_class,
+	.flags          = HWMOD_SET_DEFAULT_CLOCKACT,
 };
 
 /* timer3 */
@@ -304,6 +307,7 @@ struct omap_hwmod omap2xxx_timer3_hwmod = {
 		},
 	},
 	.class		= &omap2xxx_timer_hwmod_class,
+	.flags          = HWMOD_SET_DEFAULT_CLOCKACT,
 };
 
 /* timer4 */
@@ -322,6 +326,7 @@ struct omap_hwmod omap2xxx_timer4_hwmod = {
 		},
 	},
 	.class		= &omap2xxx_timer_hwmod_class,
+	.flags          = HWMOD_SET_DEFAULT_CLOCKACT,
 };
 
 /* timer5 */
@@ -341,6 +346,7 @@ struct omap_hwmod omap2xxx_timer5_hwmod = {
 	},
 	.dev_attr	= &capability_dsp_dev_attr,
 	.class		= &omap2xxx_timer_hwmod_class,
+	.flags          = HWMOD_SET_DEFAULT_CLOCKACT,
 };
 
 /* timer6 */
@@ -360,6 +366,7 @@ struct omap_hwmod omap2xxx_timer6_hwmod = {
 	},
 	.dev_attr	= &capability_dsp_dev_attr,
 	.class		= &omap2xxx_timer_hwmod_class,
+	.flags          = HWMOD_SET_DEFAULT_CLOCKACT,
 };
 
 /* timer7 */
@@ -379,6 +386,7 @@ struct omap_hwmod omap2xxx_timer7_hwmod = {
 	},
 	.dev_attr	= &capability_dsp_dev_attr,
 	.class		= &omap2xxx_timer_hwmod_class,
+	.flags          = HWMOD_SET_DEFAULT_CLOCKACT,
 };
 
 /* timer8 */
@@ -398,6 +406,7 @@ struct omap_hwmod omap2xxx_timer8_hwmod = {
 	},
 	.dev_attr	= &capability_dsp_dev_attr,
 	.class		= &omap2xxx_timer_hwmod_class,
+	.flags          = HWMOD_SET_DEFAULT_CLOCKACT,
 };
 
 /* timer9 */
@@ -417,6 +426,7 @@ struct omap_hwmod omap2xxx_timer9_hwmod = {
 	},
 	.dev_attr	= &capability_pwm_dev_attr,
 	.class		= &omap2xxx_timer_hwmod_class,
+	.flags          = HWMOD_SET_DEFAULT_CLOCKACT,
 };
 
 /* timer10 */
@@ -436,6 +446,7 @@ struct omap_hwmod omap2xxx_timer10_hwmod = {
 	},
 	.dev_attr	= &capability_pwm_dev_attr,
 	.class		= &omap2xxx_timer_hwmod_class,
+	.flags          = HWMOD_SET_DEFAULT_CLOCKACT,
 };
 
 /* timer11 */
@@ -455,6 +466,7 @@ struct omap_hwmod omap2xxx_timer11_hwmod = {
 	},
 	.dev_attr	= &capability_pwm_dev_attr,
 	.class		= &omap2xxx_timer_hwmod_class,
+	.flags          = HWMOD_SET_DEFAULT_CLOCKACT,
 };
 
 /* timer12 */
@@ -474,6 +486,7 @@ struct omap_hwmod omap2xxx_timer12_hwmod = {
 	},
 	.dev_attr	= &capability_pwm_dev_attr,
 	.class		= &omap2xxx_timer_hwmod_class,
+	.flags          = HWMOD_SET_DEFAULT_CLOCKACT,
 };
 
 /* wd_timer2 */
@@ -499,6 +512,7 @@ struct omap_hwmod omap2xxx_uart1_hwmod = {
 	.mpu_irqs	= omap2_uart1_mpu_irqs,
 	.sdma_reqs	= omap2_uart1_sdma_reqs,
 	.main_clk	= "uart1_fck",
+	.flags		= DEBUG_OMAP2UART1_FLAGS | HWMOD_SWSUP_SIDLE_ACT,
 	.prcm		= {
 		.omap2 = {
 			.module_offs = CORE_MOD,
@@ -518,6 +532,7 @@ struct omap_hwmod omap2xxx_uart2_hwmod = {
 	.mpu_irqs	= omap2_uart2_mpu_irqs,
 	.sdma_reqs	= omap2_uart2_sdma_reqs,
 	.main_clk	= "uart2_fck",
+	.flags		= DEBUG_OMAP2UART2_FLAGS | HWMOD_SWSUP_SIDLE_ACT,
 	.prcm		= {
 		.omap2 = {
 			.module_offs = CORE_MOD,
@@ -537,6 +552,7 @@ struct omap_hwmod omap2xxx_uart3_hwmod = {
 	.mpu_irqs	= omap2_uart3_mpu_irqs,
 	.sdma_reqs	= omap2_uart3_sdma_reqs,
 	.main_clk	= "uart3_fck",
+	.flags		= DEBUG_OMAP2UART3_FLAGS | HWMOD_SWSUP_SIDLE_ACT,
 	.prcm		= {
 		.omap2 = {
 			.module_offs = CORE_MOD,
@@ -780,7 +796,7 @@ struct omap_hwmod omap2xxx_counter_32k_hwmod = {
 
 /* gpmc */
 static struct omap_hwmod_irq_info omap2xxx_gpmc_irqs[] = {
-	{ .irq = 20 },
+	{ .irq = 20 + OMAP_INTC_START, },
 	{ .irq = -1 }
 };
 
@@ -825,7 +841,7 @@ static struct omap_hwmod_class omap2_rng_hwmod_class = {
 };
 
 static struct omap_hwmod_irq_info omap2_rng_mpu_irqs[] = {
-	{ .irq = 52 },
+	{ .irq = 52 + OMAP_INTC_START, },
 	{ .irq = -1 }
 };
 
@@ -850,4 +866,85 @@ struct omap_hwmod omap2xxx_rng_hwmod = {
 	 */
 	.flags		= HWMOD_INIT_NO_RESET,
 	.class		= &omap2_rng_hwmod_class,
+};
+
+/* SHAM */
+
+static struct omap_hwmod_class_sysconfig omap2_sham_sysc = {
+	.rev_offs	= 0x5c,
+	.sysc_offs	= 0x60,
+	.syss_offs	= 0x64,
+	.sysc_flags	= (SYSC_HAS_SOFTRESET | SYSC_HAS_AUTOIDLE |
+			   SYSS_HAS_RESET_STATUS),
+	.sysc_fields	= &omap_hwmod_sysc_type1,
+};
+
+static struct omap_hwmod_class omap2xxx_sham_class = {
+	.name	= "sham",
+	.sysc	= &omap2_sham_sysc,
+};
+
+static struct omap_hwmod_irq_info omap2_sham_mpu_irqs[] = {
+	{ .irq = 51 + OMAP_INTC_START, },
+	{ .irq = -1 }
+};
+
+static struct omap_hwmod_dma_info omap2_sham_sdma_chs[] = {
+	{ .name = "rx", .dma_req = 13 },
+	{ .dma_req = -1 }
+};
+
+struct omap_hwmod omap2xxx_sham_hwmod = {
+	.name		= "sham",
+	.mpu_irqs	= omap2_sham_mpu_irqs,
+	.sdma_reqs	= omap2_sham_sdma_chs,
+	.main_clk	= "l4_ck",
+	.prcm		= {
+		.omap2 = {
+			.module_offs = CORE_MOD,
+			.prcm_reg_id = 4,
+			.module_bit = OMAP24XX_EN_SHA_SHIFT,
+			.idlest_reg_id = 4,
+			.idlest_idle_bit = OMAP24XX_ST_SHA_SHIFT,
+		},
+	},
+	.class		= &omap2xxx_sham_class,
+};
+
+/* AES */
+
+static struct omap_hwmod_class_sysconfig omap2_aes_sysc = {
+	.rev_offs	= 0x44,
+	.sysc_offs	= 0x48,
+	.syss_offs	= 0x4c,
+	.sysc_flags	= (SYSC_HAS_SOFTRESET | SYSC_HAS_AUTOIDLE |
+			   SYSS_HAS_RESET_STATUS),
+	.sysc_fields	= &omap_hwmod_sysc_type1,
+};
+
+static struct omap_hwmod_class omap2xxx_aes_class = {
+	.name	= "aes",
+	.sysc	= &omap2_aes_sysc,
+};
+
+static struct omap_hwmod_dma_info omap2_aes_sdma_chs[] = {
+	{ .name = "tx", .dma_req = 9 },
+	{ .name = "rx", .dma_req = 10 },
+	{ .dma_req = -1 }
+};
+
+struct omap_hwmod omap2xxx_aes_hwmod = {
+	.name		= "aes",
+	.sdma_reqs	= omap2_aes_sdma_chs,
+	.main_clk	= "l4_ck",
+	.prcm		= {
+		.omap2 = {
+			.module_offs = CORE_MOD,
+			.prcm_reg_id = 4,
+			.module_bit = OMAP24XX_EN_AES_SHIFT,
+			.idlest_reg_id = 4,
+			.idlest_idle_bit = OMAP24XX_ST_AES_SHIFT,
+		},
+	},
+	.class		= &omap2xxx_aes_class,
 };

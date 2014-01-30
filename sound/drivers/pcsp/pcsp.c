@@ -39,15 +39,16 @@ MODULE_PARM_DESC(nopcm, "Disable PC-Speaker PCM sound. Only beeps remain.");
 
 struct snd_pcsp pcsp_chip;
 
-static int __devinit snd_pcsp_create(struct snd_card *card)
+static int snd_pcsp_create(struct snd_card *card)
 {
 	static struct snd_device_ops ops = { };
 	struct timespec tp;
 	int err;
 	int div, min_div, order;
 
+	hrtimer_get_res(CLOCK_MONOTONIC, &tp);
+
 	if (!nopcm) {
-		hrtimer_get_res(CLOCK_MONOTONIC, &tp);
 		if (tp.tv_sec || tp.tv_nsec > PCSP_MAX_PERIOD_NS) {
 			printk(KERN_ERR "PCSP: Timer resolution is not sufficient "
 				"(%linS)\n", tp.tv_nsec);
@@ -93,7 +94,7 @@ static int __devinit snd_pcsp_create(struct snd_card *card)
 	return 0;
 }
 
-static int __devinit snd_card_pcsp_probe(int devnum, struct device *dev)
+static int snd_card_pcsp_probe(int devnum, struct device *dev)
 {
 	struct snd_card *card;
 	int err;
@@ -142,7 +143,7 @@ static int __devinit snd_card_pcsp_probe(int devnum, struct device *dev)
 	return 0;
 }
 
-static int __devinit alsa_card_pcsp_init(struct device *dev)
+static int alsa_card_pcsp_init(struct device *dev)
 {
 	int err;
 
@@ -161,12 +162,12 @@ static int __devinit alsa_card_pcsp_init(struct device *dev)
 	return 0;
 }
 
-static void __devexit alsa_card_pcsp_exit(struct snd_pcsp *chip)
+static void alsa_card_pcsp_exit(struct snd_pcsp *chip)
 {
 	snd_card_free(chip->card);
 }
 
-static int __devinit pcsp_probe(struct platform_device *dev)
+static int pcsp_probe(struct platform_device *dev)
 {
 	int err;
 
@@ -184,12 +185,11 @@ static int __devinit pcsp_probe(struct platform_device *dev)
 	return 0;
 }
 
-static int __devexit pcsp_remove(struct platform_device *dev)
+static int pcsp_remove(struct platform_device *dev)
 {
 	struct snd_pcsp *chip = platform_get_drvdata(dev);
-	alsa_card_pcsp_exit(chip);
 	pcspkr_input_remove(chip->input_dev);
-	platform_set_drvdata(dev, NULL);
+	alsa_card_pcsp_exit(chip);
 	return 0;
 }
 
@@ -227,7 +227,7 @@ static struct platform_driver pcsp_platform_driver = {
 		.pm	= PCSP_PM_OPS,
 	},
 	.probe		= pcsp_probe,
-	.remove		= __devexit_p(pcsp_remove),
+	.remove		= pcsp_remove,
 	.shutdown	= pcsp_shutdown,
 };
 

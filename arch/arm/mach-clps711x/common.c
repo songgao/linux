@@ -21,13 +21,18 @@
  */
 #include <linux/io.h>
 #include <linux/init.h>
+#include <linux/sizes.h>
 #include <linux/interrupt.h>
 #include <linux/irq.h>
 #include <linux/clk.h>
 #include <linux/clkdev.h>
+#include <linux/clockchips.h>
+#include <linux/clocksource.h>
 #include <linux/clk-provider.h>
+#include <linux/sched_clock.h>
 
-#include <asm/sizes.h>
+#include <asm/exception.h>
+#include <asm/mach/irq.h>
 #include <asm/mach/map.h>
 #include <asm/mach/time.h>
 #include <asm/system_misc.h>
@@ -36,7 +41,6 @@
 
 static struct clk *clk_pll, *clk_bus, *clk_uart, *clk_timerl, *clk_timerh,
 		  *clk_tint, *clk_spi;
-static unsigned long latch;
 
 /*
  * This maps the generic CLPS711x registers
@@ -45,7 +49,7 @@ static struct map_desc clps711x_io_desc[] __initdata = {
 	{
 		.virtual	= (unsigned long)CLPS711X_VIRT_BASE,
 		.pfn		= __phys_to_pfn(CLPS711X_PHYS_BASE),
-		.length		= SZ_1M,
+		.length		= SZ_64K,
 		.type		= MT_DEVICE
 	}
 };
@@ -64,7 +68,7 @@ static void int1_mask(struct irq_data *d)
 	clps_writel(intmr1, INTMR1);
 }
 
-static void int1_ack(struct irq_data *d)
+static void int1_eoi(struct irq_data *d)
 {
 	switch (d->irq) {
 	case IRQ_CSINT:  clps_writel(0, COEOI);  break;
@@ -86,7 +90,8 @@ static void int1_unmask(struct irq_data *d)
 }
 
 static struct irq_chip int1_chip = {
-	.irq_ack	= int1_ack,
+	.name		= "Interrupt Vector 1",
+	.irq_eoi	= int1_eoi,
 	.irq_mask	= int1_mask,
 	.irq_unmask	= int1_unmask,
 };
@@ -100,7 +105,7 @@ static void int2_mask(struct irq_data *d)
 	clps_writel(intmr2, INTMR2);
 }
 
-static void int2_ack(struct irq_data *d)
+static void int2_eoi(struct irq_data *d)
 {
 	switch (d->irq) {
 	case IRQ_KBDINT: clps_writel(0, KBDEOI); break;
@@ -117,73 +122,185 @@ static void int2_unmask(struct irq_data *d)
 }
 
 static struct irq_chip int2_chip = {
-	.irq_ack	= int2_ack,
+	.name		= "Interrupt Vector 2",
+	.irq_eoi	= int2_eoi,
 	.irq_mask	= int2_mask,
 	.irq_unmask	= int2_unmask,
+};
+
+static void int3_mask(struct irq_data *d)
+{
+	u32 intmr3;
+
+	intmr3 = clps_readl(INTMR3);
+	intmr3 &= ~(1 << (d->irq - 32));
+	clps_writel(intmr3, INTMR3);
+}
+
+static void int3_unmask(struct irq_data *d)
+{
+	u32 intmr3;
+
+	intmr3 = clps_readl(INTMR3);
+	intmr3 |= 1 << (d->irq - 32);
+	clps_writel(intmr3, INTMR3);
+}
+
+static struct irq_chip int3_chip = {
+	.name		= "Interrupt Vector 3",
+	.irq_mask	= int3_mask,
+	.irq_unmask	= int3_unmask,
+};
+
+static struct {
+	int			nr;
+	struct irq_chip		*chip;
+	irq_flow_handler_t	handle;
+} clps711x_irqdescs[] __initdata = {
+	{ IRQ_CSINT,	&int1_chip,	handle_fasteoi_irq,	},
+	{ IRQ_EINT1,	&int1_chip,	handle_level_irq,	},
+	{ IRQ_EINT2,	&int1_chip,	handle_level_irq,	},
+	{ IRQ_EINT3,	&int1_chip,	handle_level_irq,	},
+	{ IRQ_TC1OI,	&int1_chip,	handle_fasteoi_irq,	},
+	{ IRQ_TC2OI,	&int1_chip,	handle_fasteoi_irq,	},
+	{ IRQ_RTCMI,	&int1_chip,	handle_fasteoi_irq,	},
+	{ IRQ_TINT,	&int1_chip,	handle_fasteoi_irq,	},
+	{ IRQ_UTXINT1,	&int1_chip,	handle_level_irq,	},
+	{ IRQ_URXINT1,	&int1_chip,	handle_level_irq,	},
+	{ IRQ_UMSINT,	&int1_chip,	handle_fasteoi_irq,	},
+	{ IRQ_SSEOTI,	&int1_chip,	handle_level_irq,	},
+	{ IRQ_KBDINT,	&int2_chip,	handle_fasteoi_irq,	},
+	{ IRQ_SS2RX,	&int2_chip,	handle_level_irq,	},
+	{ IRQ_SS2TX,	&int2_chip,	handle_level_irq,	},
+	{ IRQ_UTXINT2,	&int2_chip,	handle_level_irq,	},
+	{ IRQ_URXINT2,	&int2_chip,	handle_level_irq,	},
 };
 
 void __init clps711x_init_irq(void)
 {
 	unsigned int i;
 
-	for (i = 0; i < NR_IRQS; i++) {
-	        if (INT1_IRQS & (1 << i)) {
-			irq_set_chip_and_handler(i, &int1_chip,
-						 handle_level_irq);
-			set_irq_flags(i, IRQF_VALID | IRQF_PROBE);
-		}
-		if (INT2_IRQS & (1 << i)) {
-			irq_set_chip_and_handler(i, &int2_chip,
-						 handle_level_irq);
-			set_irq_flags(i, IRQF_VALID | IRQF_PROBE);
-		}
-	}
-
-	/*
-	 * Disable interrupts
-	 */
+	/* Disable interrupts */
 	clps_writel(0, INTMR1);
 	clps_writel(0, INTMR2);
+	clps_writel(0, INTMR3);
 
-	/*
-	 * Clear down any pending interrupts
-	 */
+	/* Clear down any pending interrupts */
+	clps_writel(0, BLEOI);
+	clps_writel(0, MCEOI);
 	clps_writel(0, COEOI);
 	clps_writel(0, TC1EOI);
 	clps_writel(0, TC2EOI);
 	clps_writel(0, RTCEOI);
 	clps_writel(0, TEOI);
 	clps_writel(0, UMSEOI);
-	clps_writel(0, SYNCIO);
 	clps_writel(0, KBDEOI);
+	clps_writel(0, SRXEOF);
+	clps_writel(0xffffffff, DAISR);
+
+	for (i = 0; i < ARRAY_SIZE(clps711x_irqdescs); i++) {
+		irq_set_chip_and_handler(clps711x_irqdescs[i].nr,
+					 clps711x_irqdescs[i].chip,
+					 clps711x_irqdescs[i].handle);
+		set_irq_flags(clps711x_irqdescs[i].nr,
+			      IRQF_VALID | IRQF_PROBE);
+	}
+
+	if (IS_ENABLED(CONFIG_FIQ)) {
+		init_FIQ(0);
+		irq_set_chip_and_handler(IRQ_DAIINT, &int3_chip,
+					 handle_bad_irq);
+		set_irq_flags(IRQ_DAIINT,
+			      IRQF_VALID | IRQF_PROBE | IRQF_NOAUTOEN);
+	}
 }
 
-/*
- * gettimeoffset() returns time since last timer tick, in usecs.
- *
- * 'LATCH' is hwclock ticks (see CLOCK_TICK_RATE in timex.h) per jiffy.
- * 'tick' is usecs per jiffy.
- */
-static unsigned long clps711x_gettimeoffset(void)
+static inline u32 fls16(u32 x)
 {
-	unsigned long hwticks;
-	hwticks = latch - (clps_readl(TC2D) & 0xffff);
-	return (hwticks * (tick_nsec / 1000)) / latch;
+	u32 r = 15;
+
+	if (!(x & 0xff00)) {
+		x <<= 8;
+		r -= 8;
+	}
+	if (!(x & 0xf000)) {
+		x <<= 4;
+		r -= 4;
+	}
+	if (!(x & 0xc000)) {
+		x <<= 2;
+		r -= 2;
+	}
+	if (!(x & 0x8000))
+		r--;
+
+	return r;
 }
 
-/*
- * IRQ handler for the timer
- */
-static irqreturn_t p720t_timer_interrupt(int irq, void *dev_id)
+asmlinkage void __exception_irq_entry clps711x_handle_irq(struct pt_regs *regs)
 {
-	timer_tick();
+	do {
+		u32 irqstat;
+		void __iomem *base = CLPS711X_VIRT_BASE;
+
+		irqstat = readw_relaxed(base + INTSR1) &
+			  readw_relaxed(base + INTMR1);
+		if (irqstat)
+			handle_IRQ(fls16(irqstat), regs);
+
+		irqstat = readw_relaxed(base + INTSR2) &
+			  readw_relaxed(base + INTMR2);
+		if (irqstat) {
+			handle_IRQ(fls16(irqstat) + 16, regs);
+			continue;
+		}
+
+		break;
+	} while (1);
+}
+
+static u32 notrace clps711x_sched_clock_read(void)
+{
+	return ~readw_relaxed(CLPS711X_VIRT_BASE + TC1D);
+}
+
+static void clps711x_clockevent_set_mode(enum clock_event_mode mode,
+					 struct clock_event_device *evt)
+{
+	disable_irq(IRQ_TC2OI);
+
+	switch (mode) {
+	case CLOCK_EVT_MODE_PERIODIC:
+		enable_irq(IRQ_TC2OI);
+		break;
+	case CLOCK_EVT_MODE_ONESHOT:
+		/* Not supported */
+	case CLOCK_EVT_MODE_SHUTDOWN:
+	case CLOCK_EVT_MODE_UNUSED:
+	case CLOCK_EVT_MODE_RESUME:
+		/* Left event sources disabled, no more interrupts appear */
+		break;
+	}
+}
+
+static struct clock_event_device clockevent_clps711x = {
+	.name		= "clps711x-clockevent",
+	.rating		= 300,
+	.features	= CLOCK_EVT_FEAT_PERIODIC,
+	.set_mode	= clps711x_clockevent_set_mode,
+};
+
+static irqreturn_t clps711x_timer_interrupt(int irq, void *dev_id)
+{
+	clockevent_clps711x.event_handler(&clockevent_clps711x);
+
 	return IRQ_HANDLED;
 }
 
 static struct irqaction clps711x_timer_irq = {
-	.name		= "CLPS711x Timer Tick",
-	.flags		= IRQF_DISABLED | IRQF_TIMER | IRQF_IRQPOLL,
-	.handler	= p720t_timer_interrupt,
+	.name		= "clps711x-timer",
+	.flags		= IRQF_TIMER | IRQF_IRQPOLL,
+	.handler	= clps711x_timer_interrupt,
 };
 
 static void add_fixed_clk(struct clk *clk, const char *name, int rate)
@@ -192,7 +309,7 @@ static void add_fixed_clk(struct clk *clk, const char *name, int rate)
 	clk_register_clkdev(clk, name, NULL);
 }
 
-static void __init clps711x_timer_init(void)
+void __init clps711x_timer_init(void)
 {
 	int osc, ext, pll, cpu, bus, timl, timh, uart, spi;
 	u32 tmp;
@@ -211,6 +328,7 @@ static void __init clps711x_timer_init(void)
 		cpu = ext;
 		bus = cpu;
 		spi = 135400;
+		pll = 0;
 	} else {
 		cpu = pll;
 		if (cpu >= 36864000)
@@ -229,9 +347,9 @@ static void __init clps711x_timer_init(void)
 		else
 			timh = 541440;
 	} else
-		timh = cpu / 144;
+		timh = DIV_ROUND_CLOSEST(cpu, 144);
 
-	timl = timh / 256;
+	timl = DIV_ROUND_CLOSEST(timh, 256);
 
 	/* All clocks are fixed */
 	add_fixed_clk(clk_pll, "pll", pll);
@@ -244,23 +362,29 @@ static void __init clps711x_timer_init(void)
 
 	pr_info("CPU frequency set at %i Hz.\n", cpu);
 
-	latch = (timh + HZ / 2) / HZ;
-
-	tmp = clps_readl(SYSCON1);
-	tmp |= SYSCON1_TC2S | SYSCON1_TC2M;
+	/* Start Timer1 in free running mode (Low frequency) */
+	tmp = clps_readl(SYSCON1) & ~(SYSCON1_TC1S | SYSCON1_TC1M);
 	clps_writel(tmp, SYSCON1);
 
-	clps_writel(latch - 1, TC2D);
+	setup_sched_clock(clps711x_sched_clock_read, 16, timl);
+
+	clocksource_mmio_init(CLPS711X_VIRT_BASE + TC1D,
+			      "clps711x_clocksource", timl, 300, 16,
+			      clocksource_mmio_readw_down);
+
+	/* Set Timer2 prescaler */
+	clps_writew(DIV_ROUND_CLOSEST(timh, HZ), TC2D);
+
+	/* Start Timer2 in prescale mode (High frequency)*/
+	tmp = clps_readl(SYSCON1) | SYSCON1_TC2M | SYSCON1_TC2S;
+	clps_writel(tmp, SYSCON1);
+
+	clockevents_config_and_register(&clockevent_clps711x, timh, 0, 0);
 
 	setup_irq(IRQ_TC2OI, &clps711x_timer_irq);
 }
 
-struct sys_timer clps711x_timer = {
-	.init		= clps711x_timer_init,
-	.offset		= clps711x_gettimeoffset,
-};
-
-void clps711x_restart(char mode, const char *cmd)
+void clps711x_restart(enum reboot_mode mode, const char *cmd)
 {
 	soft_restart(0);
 }
@@ -268,15 +392,11 @@ void clps711x_restart(char mode, const char *cmd)
 static void clps711x_idle(void)
 {
 	clps_writel(1, HALT);
-	__asm__ __volatile__(
-	"mov    r0, r0\n\
-	mov     r0, r0");
+	asm("mov r0, r0");
+	asm("mov r0, r0");
 }
 
-static int __init clps711x_idle_init(void)
+void __init clps711x_init_early(void)
 {
 	arm_pm_idle = clps711x_idle;
-	return 0;
 }
-
-arch_initcall(clps711x_idle_init);

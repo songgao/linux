@@ -17,6 +17,7 @@
 #include <linux/mfd/core.h>
 #include <linux/mfd/max8907.h>
 #include <linux/module.h>
+#include <linux/of.h>
 #include <linux/of_device.h>
 #include <linux/regmap.h>
 #include <linux/slab.h>
@@ -183,7 +184,7 @@ static void max8907_power_off(void)
 			MAX8907_MASK_POWER_OFF, MAX8907_MASK_POWER_OFF);
 }
 
-static __devinit int max8907_i2c_probe(struct i2c_client *i2c,
+static int max8907_i2c_probe(struct i2c_client *i2c,
 				       const struct i2c_device_id *id)
 {
 	struct max8907 *max8907;
@@ -288,7 +289,7 @@ err_alloc_drvdata:
 	return ret;
 }
 
-static __devexit int max8907_i2c_remove(struct i2c_client *i2c)
+static int max8907_i2c_remove(struct i2c_client *i2c)
 {
 	struct max8907 *max8907 = i2c_get_clientdata(i2c);
 

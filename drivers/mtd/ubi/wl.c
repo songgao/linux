@@ -1,5 +1,4 @@
 /*
- * @ubi: UBI device description object
  * Copyright (c) International Business Machines Corp., 2006
  *
  * This program is free software; you can redistribute it and/or modify
@@ -498,7 +497,7 @@ out:
  * @ubi: UBI device description object
  *
  * This function returns a physical eraseblock in case of success and a
- * negative error code in case of failure. Might sleep.
+ * negative error code in case of failure.
  */
 static int __wl_get_peb(struct ubi_device *ubi)
 {
@@ -540,13 +539,6 @@ retry:
 	 * ubi_wl_get_peb() after removing e from the pool. */
 	prot_queue_add(ubi, e);
 #endif
-	err = ubi_self_check_all_ff(ubi, e->pnum, ubi->vid_hdr_aloffset,
-				    ubi->peb_size - ubi->vid_hdr_aloffset);
-	if (err) {
-		ubi_err("new PEB %d does not contain all 0xFF bytes", e->pnum);
-		return err;
-	}
-
 	return e->pnum;
 }
 
@@ -607,10 +599,6 @@ static void refill_wl_user_pool(struct ubi_device *ubi)
 	return_unused_pool_pebs(ubi, pool);
 
 	for (pool->size = 0; pool->size < pool->max_size; pool->size++) {
-		if (!ubi->free.rb_node ||
-		   (ubi->free_count - ubi->beb_rsvd_pebs < 1))
-			break;
-
 		pool->pebs[pool->size] = __wl_get_peb(ubi);
 		if (pool->pebs[pool->size] < 0)
 			break;
@@ -679,16 +667,29 @@ static struct ubi_wl_entry *get_peb_for_wl(struct ubi_device *ubi)
 #else
 static struct ubi_wl_entry *get_peb_for_wl(struct ubi_device *ubi)
 {
-	return find_wl_entry(ubi, &ubi->free, WL_FREE_MAX_DIFF);
+	struct ubi_wl_entry *e;
+
+	e = find_wl_entry(ubi, &ubi->free, WL_FREE_MAX_DIFF);
+	self_check_in_wl_tree(ubi, e, &ubi->free);
+	rb_erase(&e->u.rb, &ubi->free);
+
+	return e;
 }
 
 int ubi_wl_get_peb(struct ubi_device *ubi)
 {
-	int peb;
+	int peb, err;
 
 	spin_lock(&ubi->wl_lock);
 	peb = __wl_get_peb(ubi);
 	spin_unlock(&ubi->wl_lock);
+
+	err = ubi_self_check_all_ff(ubi, peb, ubi->vid_hdr_aloffset,
+				    ubi->peb_size - ubi->vid_hdr_aloffset);
+	if (err) {
+		ubi_err("new PEB %d does not contain all 0xFF bytes", peb);
+		return err;
+	}
 
 	return peb;
 }
@@ -1064,6 +1065,9 @@ static int wear_leveling_worker(struct ubi_device *ubi, struct ubi_work *wrk,
 		if (!(e2->ec - e1->ec >= UBI_WL_THRESHOLD)) {
 			dbg_wl("no WL needed: min used EC %d, max free EC %d",
 			       e1->ec, e2->ec);
+
+			/* Give the unused PEB back */
+			wl_tree_add(e2, &ubi->free);
 			goto out_cancel;
 		}
 		self_check_in_wl_tree(ubi, e1, &ubi->used);
@@ -2044,7 +2048,7 @@ static int self_check_ec(struct ubi_device *ubi, int pnum, int ec)
 	long long read_ec;
 	struct ubi_ec_hdr *ec_hdr;
 
-	if (!ubi->dbg->chk_gen)
+	if (!ubi_dbg_chk_gen(ubi))
 		return 0;
 
 	ec_hdr = kzalloc(ubi->ec_hdr_alsize, GFP_NOFS);
@@ -2084,7 +2088,7 @@ out_free:
 static int self_check_in_wl_tree(const struct ubi_device *ubi,
 				 struct ubi_wl_entry *e, struct rb_root *root)
 {
-	if (!ubi->dbg->chk_gen)
+	if (!ubi_dbg_chk_gen(ubi))
 		return 0;
 
 	if (in_wl_tree(e, root))
@@ -2110,7 +2114,7 @@ static int self_check_in_pq(const struct ubi_device *ubi,
 	struct ubi_wl_entry *p;
 	int i;
 
-	if (!ubi->dbg->chk_gen)
+	if (!ubi_dbg_chk_gen(ubi))
 		return 0;
 
 	for (i = 0; i < UBI_PROT_QUEUE_LEN; ++i)

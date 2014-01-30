@@ -236,7 +236,7 @@ struct pci_id_info {
         int drv_flags;		/* Driver use, intended as capability flags. */
 };
 
-static const struct pci_id_info pci_id_tbl[] __devinitconst = {
+static const struct pci_id_info pci_id_tbl[] = {
 	{ 				/* Sometime a Level-One switch card. */
 	  "Winbond W89c840",	CanHaveMII | HasBrokenTx | FDXOnNoMII},
 	{ "Winbond W89c840",	CanHaveMII | HasBrokenTx},
@@ -358,8 +358,7 @@ static const struct net_device_ops netdev_ops = {
 	.ndo_validate_addr	= eth_validate_addr,
 };
 
-static int __devinit w840_probe1 (struct pci_dev *pdev,
-				  const struct pci_device_id *ent)
+static int w840_probe1(struct pci_dev *pdev, const struct pci_device_id *ent)
 {
 	struct net_device *dev;
 	struct netdev_private *np;
@@ -469,7 +468,6 @@ static int __devinit w840_probe1 (struct pci_dev *pdev,
 	return 0;
 
 err_out_cleardev:
-	pci_set_drvdata(pdev, NULL);
 	pci_iounmap(pdev, ioaddr);
 err_out_free_res:
 	pci_release_regions(pdev);
@@ -1532,7 +1530,7 @@ static int netdev_close(struct net_device *dev)
 	return 0;
 }
 
-static void __devexit w840_remove1 (struct pci_dev *pdev)
+static void w840_remove1(struct pci_dev *pdev)
 {
 	struct net_device *dev = pci_get_drvdata(pdev);
 
@@ -1543,8 +1541,6 @@ static void __devexit w840_remove1 (struct pci_dev *pdev)
 		pci_iounmap(pdev, np->base_addr);
 		free_netdev(dev);
 	}
-
-	pci_set_drvdata(pdev, NULL);
 }
 
 #ifdef CONFIG_PM
@@ -1647,7 +1643,7 @@ static struct pci_driver w840_driver = {
 	.name		= DRV_NAME,
 	.id_table	= w840_pci_tbl,
 	.probe		= w840_probe1,
-	.remove		= __devexit_p(w840_remove1),
+	.remove		= w840_remove1,
 #ifdef CONFIG_PM
 	.suspend	= w840_suspend,
 	.resume		= w840_resume,

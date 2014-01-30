@@ -53,28 +53,6 @@ void ptrace_disable(struct task_struct *child)
 {
 }
 
-/*
- * Handle hitting a breakpoint.
- */
-static int ptrace_break(struct pt_regs *regs)
-{
-	siginfo_t info = {
-		.si_signo = SIGTRAP,
-		.si_errno = 0,
-		.si_code  = TRAP_BRKPT,
-		.si_addr  = (void __user *)instruction_pointer(regs),
-	};
-
-	force_sig_info(SIGTRAP, &info, current);
-	return 0;
-}
-
-static int arm64_break_trap(unsigned long addr, unsigned int esr,
-			    struct pt_regs *regs)
-{
-	return ptrace_break(regs);
-}
-
 #ifdef CONFIG_HAVE_HW_BREAKPOINT
 /*
  * Handle hitting a HW-breakpoint.
@@ -234,7 +212,11 @@ static int ptrace_hbp_fill_attr_ctrl(unsigned int note_type,
 				     struct arch_hw_breakpoint_ctrl ctrl,
 				     struct perf_event_attr *attr)
 {
-	int err, len, type;
+	int err, len, type, disabled = !ctrl.enabled;
+
+	attr->disabled = disabled;
+	if (disabled)
+		return 0;
 
 	err = arch_bp_generic_fields(ctrl, &len, &type);
 	if (err)
@@ -255,7 +237,6 @@ static int ptrace_hbp_fill_attr_ctrl(unsigned int note_type,
 
 	attr->bp_len	= len;
 	attr->bp_type	= type;
-	attr->disabled	= !ctrl.enabled;
 
 	return 0;
 }
@@ -372,7 +353,7 @@ static int ptrace_hbp_set_addr(unsigned int note_type,
 
 #define PTRACE_HBP_ADDR_SZ	sizeof(u64)
 #define PTRACE_HBP_CTRL_SZ	sizeof(u32)
-#define PTRACE_HBP_REG_OFF	sizeof(u32)
+#define PTRACE_HBP_PAD_SZ	sizeof(u32)
 
 static int hw_break_get(struct task_struct *target,
 			const struct user_regset *regset,
@@ -380,7 +361,7 @@ static int hw_break_get(struct task_struct *target,
 			void *kbuf, void __user *ubuf)
 {
 	unsigned int note_type = regset->core_note_type;
-	int ret, idx = 0, offset = PTRACE_HBP_REG_OFF, limit;
+	int ret, idx = 0, offset, limit;
 	u32 info, ctrl;
 	u64 addr;
 
@@ -389,11 +370,20 @@ static int hw_break_get(struct task_struct *target,
 	if (ret)
 		return ret;
 
-	ret = user_regset_copyout(&pos, &count, &kbuf, &ubuf, &info, 0, 4);
+	ret = user_regset_copyout(&pos, &count, &kbuf, &ubuf, &info, 0,
+				  sizeof(info));
+	if (ret)
+		return ret;
+
+	/* Pad */
+	offset = offsetof(struct user_hwdebug_state, pad);
+	ret = user_regset_copyout_zero(&pos, &count, &kbuf, &ubuf, offset,
+				       offset + PTRACE_HBP_PAD_SZ);
 	if (ret)
 		return ret;
 
 	/* (address, ctrl) registers */
+	offset = offsetof(struct user_hwdebug_state, dbg_regs);
 	limit = regset->n * regset->size;
 	while (count && offset < limit) {
 		ret = ptrace_hbp_get_addr(note_type, target, idx, &addr);
@@ -413,6 +403,13 @@ static int hw_break_get(struct task_struct *target,
 		if (ret)
 			return ret;
 		offset += PTRACE_HBP_CTRL_SZ;
+
+		ret = user_regset_copyout_zero(&pos, &count, &kbuf, &ubuf,
+					       offset,
+					       offset + PTRACE_HBP_PAD_SZ);
+		if (ret)
+			return ret;
+		offset += PTRACE_HBP_PAD_SZ;
 		idx++;
 	}
 
@@ -425,12 +422,13 @@ static int hw_break_set(struct task_struct *target,
 			const void *kbuf, const void __user *ubuf)
 {
 	unsigned int note_type = regset->core_note_type;
-	int ret, idx = 0, offset = PTRACE_HBP_REG_OFF, limit;
+	int ret, idx = 0, offset, limit;
 	u32 ctrl;
 	u64 addr;
 
-	/* Resource info */
-	ret = user_regset_copyin_ignore(&pos, &count, &kbuf, &ubuf, 0, 4);
+	/* Resource info and pad */
+	offset = offsetof(struct user_hwdebug_state, dbg_regs);
+	ret = user_regset_copyin_ignore(&pos, &count, &kbuf, &ubuf, 0, offset);
 	if (ret)
 		return ret;
 
@@ -454,6 +452,13 @@ static int hw_break_set(struct task_struct *target,
 		if (ret)
 			return ret;
 		offset += PTRACE_HBP_CTRL_SZ;
+
+		ret = user_regset_copyin_ignore(&pos, &count, &kbuf, &ubuf,
+						offset,
+						offset + PTRACE_HBP_PAD_SZ);
+		if (ret)
+			return ret;
+		offset += PTRACE_HBP_PAD_SZ;
 		idx++;
 	}
 
@@ -629,28 +634,27 @@ static int compat_gpr_get(struct task_struct *target,
 
 	for (i = 0; i < num_regs; ++i) {
 		unsigned int idx = start + i;
-		void *reg;
+		compat_ulong_t reg;
 
 		switch (idx) {
 		case 15:
-			reg = (void *)&task_pt_regs(target)->pc;
+			reg = task_pt_regs(target)->pc;
 			break;
 		case 16:
-			reg = (void *)&task_pt_regs(target)->pstate;
+			reg = task_pt_regs(target)->pstate;
 			break;
 		case 17:
-			reg = (void *)&task_pt_regs(target)->orig_x0;
+			reg = task_pt_regs(target)->orig_x0;
 			break;
 		default:
-			reg = (void *)&task_pt_regs(target)->regs[idx];
+			reg = task_pt_regs(target)->regs[idx];
 		}
 
-		ret = copy_to_user(ubuf, reg, sizeof(compat_ulong_t));
-
+		ret = copy_to_user(ubuf, &reg, sizeof(reg));
 		if (ret)
 			break;
-		else
-			ubuf += sizeof(compat_ulong_t);
+
+		ubuf += sizeof(reg);
 	}
 
 	return ret;
@@ -678,28 +682,28 @@ static int compat_gpr_set(struct task_struct *target,
 
 	for (i = 0; i < num_regs; ++i) {
 		unsigned int idx = start + i;
-		void *reg;
+		compat_ulong_t reg;
+
+		ret = copy_from_user(&reg, ubuf, sizeof(reg));
+		if (ret)
+			return ret;
+
+		ubuf += sizeof(reg);
 
 		switch (idx) {
 		case 15:
-			reg = (void *)&newregs.pc;
+			newregs.pc = reg;
 			break;
 		case 16:
-			reg = (void *)&newregs.pstate;
+			newregs.pstate = reg;
 			break;
 		case 17:
-			reg = (void *)&newregs.orig_x0;
+			newregs.orig_x0 = reg;
 			break;
 		default:
-			reg = (void *)&newregs.regs[idx];
+			newregs.regs[idx] = reg;
 		}
 
-		ret = copy_from_user(reg, ubuf, sizeof(compat_ulong_t));
-
-		if (ret)
-			goto out;
-		else
-			ubuf += sizeof(compat_ulong_t);
 	}
 
 	if (valid_user_regs(&newregs.user_regs))
@@ -707,7 +711,6 @@ static int compat_gpr_set(struct task_struct *target,
 	else
 		ret = -EINVAL;
 
-out:
 	return ret;
 }
 
@@ -787,33 +790,6 @@ static const struct user_regset_view user_aarch32_view = {
 	.name = "aarch32", .e_machine = EM_ARM,
 	.regsets = aarch32_regsets, .n = ARRAY_SIZE(aarch32_regsets)
 };
-
-int aarch32_break_trap(struct pt_regs *regs)
-{
-	unsigned int instr;
-	bool bp = false;
-	void __user *pc = (void __user *)instruction_pointer(regs);
-
-	if (compat_thumb_mode(regs)) {
-		/* get 16-bit Thumb instruction */
-		get_user(instr, (u16 __user *)pc);
-		if (instr == AARCH32_BREAK_THUMB2_LO) {
-			/* get second half of 32-bit Thumb-2 instruction */
-			get_user(instr, (u16 __user *)(pc + 2));
-			bp = instr == AARCH32_BREAK_THUMB2_HI;
-		} else {
-			bp = instr == AARCH32_BREAK_THUMB;
-		}
-	} else {
-		/* 32-bit ARM instruction */
-		get_user(instr, (u32 __user *)pc);
-		bp = (instr & ~0xf0000000) == AARCH32_BREAK_ARM;
-	}
-
-	if (bp)
-		return ptrace_break(regs);
-	return 1;
-}
 
 static int compat_ptrace_read_user(struct task_struct *tsk, compat_ulong_t off,
 				   compat_ulong_t __user *ret)
@@ -1081,16 +1057,6 @@ long arch_ptrace(struct task_struct *child, long request,
 {
 	return ptrace_request(child, request, addr, data);
 }
-
-
-static int __init ptrace_break_init(void)
-{
-	hook_debug_fault_code(DBG_ESR_EVT_BRK, arm64_break_trap, SIGTRAP,
-			      TRAP_BRKPT, "ptrace BRK handler");
-	return 0;
-}
-core_initcall(ptrace_break_init);
-
 
 asmlinkage int syscall_trace(int dir, struct pt_regs *regs)
 {

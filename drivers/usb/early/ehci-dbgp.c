@@ -20,6 +20,7 @@
 #include <linux/usb/ehci_def.h>
 #include <linux/delay.h>
 #include <linux/serial_core.h>
+#include <linux/kconfig.h>
 #include <linux/kgdb.h>
 #include <linux/kthread.h>
 #include <asm/io.h>
@@ -567,10 +568,6 @@ try_again:
 		dbgp_printk("Could not find attached debug device\n");
 		goto err;
 	}
-	if (ret < 0) {
-		dbgp_printk("Attached device is not a debug device\n");
-		goto err;
-	}
 	dbgp_endpoint_out = dbgp_desc.bDebugOutEndpoint;
 	dbgp_endpoint_in = dbgp_desc.bDebugInEndpoint;
 
@@ -613,12 +610,6 @@ err:
 		goto try_again;
 	return -ENODEV;
 }
-
-int dbgp_external_startup(struct usb_hcd *hcd)
-{
-	return xen_dbgp_external_startup(hcd) ?: _dbgp_external_startup();
-}
-EXPORT_SYMBOL_GPL(dbgp_external_startup);
 
 static int ehci_reset_port(int port)
 {
@@ -979,6 +970,7 @@ struct console early_dbgp_console = {
 	.index =	-1,
 };
 
+#if IS_ENABLED(CONFIG_USB)
 int dbgp_reset_prep(struct usb_hcd *hcd)
 {
 	int ret = xen_dbgp_reset_prep(hcd);
@@ -1006,6 +998,13 @@ int dbgp_reset_prep(struct usb_hcd *hcd)
 	return 0;
 }
 EXPORT_SYMBOL_GPL(dbgp_reset_prep);
+
+int dbgp_external_startup(struct usb_hcd *hcd)
+{
+	return xen_dbgp_external_startup(hcd) ?: _dbgp_external_startup();
+}
+EXPORT_SYMBOL_GPL(dbgp_external_startup);
+#endif /* USB */
 
 #ifdef CONFIG_KGDB
 

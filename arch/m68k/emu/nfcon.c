@@ -15,6 +15,7 @@
 #include <linux/slab.h>
 #include <linux/err.h>
 #include <linux/uaccess.h>
+#include <linux/io.h>
 
 #include <asm/natfeat.h>
 
@@ -25,17 +26,18 @@ static struct tty_driver *nfcon_tty_driver;
 static void nfputs(const char *str, unsigned int count)
 {
 	char buf[68];
+	unsigned long phys = virt_to_phys(buf);
 
 	buf[64] = 0;
 	while (count > 64) {
 		memcpy(buf, str, 64);
-		nf_call(stderr_id, buf);
+		nf_call(stderr_id, phys);
 		str += 64;
 		count -= 64;
 	}
 	memcpy(buf, str, count);
 	buf[count] = 0;
-	nf_call(stderr_id, buf);
+	nf_call(stderr_id, phys);
 }
 
 static void nfcon_write(struct console *con, const char *str,
@@ -79,7 +81,7 @@ static int nfcon_tty_put_char(struct tty_struct *tty, unsigned char ch)
 {
 	char temp[2] = { ch, 0 };
 
-	nf_call(stderr_id, temp);
+	nf_call(stderr_id, virt_to_phys(temp));
 	return 1;
 }
 
@@ -120,8 +122,6 @@ static int __init nfcon_init(void)
 {
 	int res;
 
-	tty_port_init(&nfcon_tty_port);
-
 	stderr_id = nf_get_id("NF_STDERR");
 	if (!stderr_id)
 		return -ENODEV;
@@ -129,6 +129,8 @@ static int __init nfcon_init(void)
 	nfcon_tty_driver = alloc_tty_driver(1);
 	if (!nfcon_tty_driver)
 		return -ENOMEM;
+
+	tty_port_init(&nfcon_tty_port);
 
 	nfcon_tty_driver->driver_name = "nfcon";
 	nfcon_tty_driver->name = "nfcon";
@@ -143,6 +145,7 @@ static int __init nfcon_init(void)
 	if (res) {
 		pr_err("failed to register nfcon tty driver\n");
 		put_tty_driver(nfcon_tty_driver);
+		tty_port_destroy(&nfcon_tty_port);
 		return res;
 	}
 
@@ -157,6 +160,7 @@ static void __exit nfcon_exit(void)
 	unregister_console(&nf_console);
 	tty_unregister_driver(nfcon_tty_driver);
 	put_tty_driver(nfcon_tty_driver);
+	tty_port_destroy(&nfcon_tty_port);
 }
 
 module_init(nfcon_init);

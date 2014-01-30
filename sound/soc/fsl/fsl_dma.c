@@ -21,6 +21,8 @@
 #include <linux/interrupt.h>
 #include <linux/delay.h>
 #include <linux/gfp.h>
+#include <linux/of_address.h>
+#include <linux/of_irq.h>
 #include <linux/of_platform.h>
 #include <linux/list.h>
 #include <linux/slab.h>
@@ -298,14 +300,11 @@ static int fsl_dma_new(struct snd_soc_pcm_runtime *rtd)
 {
 	struct snd_card *card = rtd->card->snd_card;
 	struct snd_pcm *pcm = rtd->pcm;
-	static u64 fsl_dma_dmamask = DMA_BIT_MASK(36);
 	int ret;
 
-	if (!card->dev->dma_mask)
-		card->dev->dma_mask = &fsl_dma_dmamask;
-
-	if (!card->dev->coherent_dma_mask)
-		card->dev->coherent_dma_mask = fsl_dma_dmamask;
+	ret = dma_coerce_mask_and_coherent(card->dev, DMA_BIT_MASK(36));
+	if (ret)
+		return ret;
 
 	/* Some codecs have separate DAIs for playback and capture, so we
 	 * should allocate a DMA buffer only for the streams that are valid.
@@ -894,7 +893,7 @@ static struct snd_pcm_ops fsl_dma_ops = {
 	.pointer	= fsl_dma_pointer,
 };
 
-static int __devinit fsl_soc_dma_probe(struct platform_device *pdev)
+static int fsl_soc_dma_probe(struct platform_device *pdev)
  {
 	struct dma_object *dma;
 	struct device_node *np = pdev->dev.of_node;
@@ -958,7 +957,7 @@ static int __devinit fsl_soc_dma_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static int __devexit fsl_soc_dma_remove(struct platform_device *pdev)
+static int fsl_soc_dma_remove(struct platform_device *pdev)
 {
 	struct dma_object *dma = dev_get_drvdata(&pdev->dev);
 
@@ -983,7 +982,7 @@ static struct platform_driver fsl_soc_dma_driver = {
 		.of_match_table = fsl_soc_dma_ids,
 	},
 	.probe = fsl_soc_dma_probe,
-	.remove = __devexit_p(fsl_soc_dma_remove),
+	.remove = fsl_soc_dma_remove,
 };
 
 module_platform_driver(fsl_soc_dma_driver);

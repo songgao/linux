@@ -29,6 +29,7 @@ struct tcm_qla2xxx_tpg_attrib {
 	int cache_dynamic_acls;
 	int demo_mode_write_protect;
 	int prod_mode_write_protect;
+	int demo_mode_login_only;
 };
 
 struct tcm_qla2xxx_tpg {
@@ -43,8 +44,6 @@ struct tcm_qla2xxx_tpg {
 	/* Returned by tcm_qla2xxx_make_tpg() */
 	struct se_portal_group se_tpg;
 };
-
-#define QLA_TPG_ATTRIB(tpg)	(&(tpg)->tpg_attrib)
 
 struct tcm_qla2xxx_fc_loopid {
 	struct se_node_acl *se_nacl;
@@ -61,6 +60,8 @@ struct tcm_qla2xxx_lport {
 	u64 lport_npiv_wwnn;
 	/* ASCII formatted WWPN for FC Target Lport */
 	char lport_name[TCM_QLA2XXX_NAMELEN];
+	/* ASCII formatted naa WWPN for VPD page 83 etc */
+	char lport_naa_name[TCM_QLA2XXX_NAMELEN];
 	/* ASCII formatted WWPN+WWNN for NPIV FC Target Lport */
 	char lport_npiv_name[TCM_QLA2XXX_NPIV_NAMELEN];
 	/* map for fc_port pointers in 24-bit FC Port ID space */

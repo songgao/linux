@@ -114,6 +114,7 @@ pll_map(struct nouveau_bios *bios)
 	switch (nv_device(bios)->card_type) {
 	case NV_04:
 	case NV_10:
+	case NV_11:
 	case NV_20:
 	case NV_30:
 		return nv04_pll_mapping;
@@ -157,11 +158,10 @@ pll_map_reg(struct nouveau_bios *bios, u32 reg, u32 *type, u8 *ver, u8 *len)
 	while (map->reg) {
 		if (map->reg == reg && *ver >= 0x20) {
 			u16 addr = (data += hdr);
+			*type = map->type;
 			while (cnt--) {
-				if (nv_ro32(bios, data) == map->reg) {
-					*type = map->type;
+				if (nv_ro32(bios, data) == map->reg)
 					return data;
-				}
 				data += *len;
 			}
 			return addr;
@@ -200,11 +200,10 @@ pll_map_type(struct nouveau_bios *bios, u8 type, u32 *reg, u8 *ver, u8 *len)
 	while (map->reg) {
 		if (map->type == type && *ver >= 0x20) {
 			u16 addr = (data += hdr);
+			*reg = map->reg;
 			while (cnt--) {
-				if (nv_ro32(bios, data) == map->reg) {
-					*reg = map->reg;
+				if (nv_ro32(bios, data) == map->reg)
 					return data;
-				}
 				data += *len;
 			}
 			return addr;

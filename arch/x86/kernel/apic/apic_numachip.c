@@ -22,11 +22,13 @@
 #include <linux/hardirq.h>
 #include <linux/delay.h>
 
+#include <asm/numachip/numachip.h>
 #include <asm/numachip/numachip_csr.h>
 #include <asm/smp.h>
 #include <asm/apic.h>
 #include <asm/ipi.h>
 #include <asm/apic_flat_64.h>
+#include <asm/pgtable.h>
 
 static int numachip_system __read_mostly;
 
@@ -72,7 +74,7 @@ static int numachip_phys_pkg_id(int initial_apic_id, int index_msb)
 	return initial_apic_id >> index_msb;
 }
 
-static int __cpuinit numachip_wakeup_secondary(int phys_apicid, unsigned long start_rip)
+static int numachip_wakeup_secondary(int phys_apicid, unsigned long start_rip)
 {
 	union numachip_csr_g3_ext_irq_gen int_gen;
 
@@ -179,6 +181,7 @@ static int __init numachip_system_init(void)
 		return 0;
 
 	x86_cpuinit.fixup_cpu_id = fixup_cpu_id;
+	x86_init.pci.arch_init = pci_numachip_init;
 
 	map_csrs();
 

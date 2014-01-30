@@ -30,28 +30,37 @@ static ssize_t manuf_show(struct device *dev, struct device_attribute *attr, cha
 	struct bcma_device *core = container_of(dev, struct bcma_device, dev);
 	return sprintf(buf, "0x%03X\n", core->id.manuf);
 }
+static DEVICE_ATTR_RO(manuf);
+
 static ssize_t id_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
 	struct bcma_device *core = container_of(dev, struct bcma_device, dev);
 	return sprintf(buf, "0x%03X\n", core->id.id);
 }
+static DEVICE_ATTR_RO(id);
+
 static ssize_t rev_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
 	struct bcma_device *core = container_of(dev, struct bcma_device, dev);
 	return sprintf(buf, "0x%02X\n", core->id.rev);
 }
+static DEVICE_ATTR_RO(rev);
+
 static ssize_t class_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
 	struct bcma_device *core = container_of(dev, struct bcma_device, dev);
 	return sprintf(buf, "0x%X\n", core->id.class);
 }
-static struct device_attribute bcma_device_attrs[] = {
-	__ATTR_RO(manuf),
-	__ATTR_RO(id),
-	__ATTR_RO(rev),
-	__ATTR_RO(class),
-	__ATTR_NULL,
+static DEVICE_ATTR_RO(class);
+
+static struct attribute *bcma_device_attrs[] = {
+	&dev_attr_manuf.attr,
+	&dev_attr_id.attr,
+	&dev_attr_rev.attr,
+	&dev_attr_class.attr,
+	NULL,
 };
+ATTRIBUTE_GROUPS(bcma_device);
 
 static struct bus_type bcma_bus_type = {
 	.name		= "bcma",
@@ -59,7 +68,7 @@ static struct bus_type bcma_bus_type = {
 	.probe		= bcma_device_probe,
 	.remove		= bcma_device_remove,
 	.uevent		= bcma_device_uevent,
-	.dev_attrs	= bcma_device_attrs,
+	.dev_groups	= bcma_device_groups,
 };
 
 static u16 bcma_cc_core_id(struct bcma_bus *bus)
@@ -80,6 +89,37 @@ struct bcma_device *bcma_find_core(struct bcma_bus *bus, u16 coreid)
 	return NULL;
 }
 EXPORT_SYMBOL_GPL(bcma_find_core);
+
+struct bcma_device *bcma_find_core_unit(struct bcma_bus *bus, u16 coreid,
+					u8 unit)
+{
+	struct bcma_device *core;
+
+	list_for_each_entry(core, &bus->cores, list) {
+		if (core->id.id == coreid && core->core_unit == unit)
+			return core;
+	}
+	return NULL;
+}
+
+bool bcma_wait_value(struct bcma_device *core, u16 reg, u32 mask, u32 value,
+		     int timeout)
+{
+	unsigned long deadline = jiffies + timeout;
+	u32 val;
+
+	do {
+		val = bcma_read32(core, reg);
+		if ((val & mask) == value)
+			return true;
+		cpu_relax();
+		udelay(10);
+	} while (!time_after_eq(jiffies, deadline));
+
+	bcma_warn(core->bus, "Timeout waiting for register 0x%04X!\n", reg);
+
+	return false;
+}
 
 static void bcma_release_core_dev(struct device *dev)
 {
@@ -107,6 +147,11 @@ static int bcma_register_cores(struct bcma_bus *bus)
 		case BCMA_CORE_4706_MAC_GBIT_COMMON:
 			continue;
 		}
+
+		/* Only first GMAC core on BCM4706 is connected and working */
+		if (core->id.id == BCMA_CORE_4706_MAC_GBIT &&
+		    core->core_unit > 0)
+			continue;
 
 		core->dev.release = bcma_release_core_dev;
 		core->dev.bus = &bcma_bus_type;
@@ -137,6 +182,14 @@ static int bcma_register_cores(struct bcma_bus *bus)
 		dev_id++;
 	}
 
+#ifdef CONFIG_BCMA_DRIVER_MIPS
+	if (bus->drv_cc.pflash.present) {
+		err = platform_device_register(&bcma_pflash_dev);
+		if (err)
+			bcma_err(bus, "Error registering parallel flash\n");
+	}
+#endif
+
 #ifdef CONFIG_BCMA_SFLASH
 	if (bus->drv_cc.sflash.present) {
 		err = platform_device_register(&bcma_sflash_dev);
@@ -152,21 +205,35 @@ static int bcma_register_cores(struct bcma_bus *bus)
 			bcma_err(bus, "Error registering NAND flash\n");
 	}
 #endif
+	err = bcma_gpio_init(&bus->drv_cc);
+	if (err == -ENOTSUPP)
+		bcma_debug(bus, "GPIO driver not activated\n");
+	else if (err)
+		bcma_err(bus, "Error registering GPIO driver: %i\n", err);
+
+	if (bus->hosttype == BCMA_HOSTTYPE_SOC) {
+		err = bcma_chipco_watchdog_register(&bus->drv_cc);
+		if (err)
+			bcma_err(bus, "Error registering watchdog driver\n");
+	}
 
 	return 0;
 }
 
 static void bcma_unregister_cores(struct bcma_bus *bus)
 {
-	struct bcma_device *core;
+	struct bcma_device *core, *tmp;
 
-	list_for_each_entry(core, &bus->cores, list) {
+	list_for_each_entry_safe(core, tmp, &bus->cores, list) {
+		list_del(&core->list);
 		if (core->dev_registered)
 			device_unregister(&core->dev);
 	}
+	if (bus->hosttype == BCMA_HOSTTYPE_SOC)
+		platform_device_unregister(bus->drv_cc.watchdog);
 }
 
-int __devinit bcma_bus_register(struct bcma_bus *bus)
+int bcma_bus_register(struct bcma_bus *bus)
 {
 	int err;
 	struct bcma_device *core;
@@ -179,8 +246,22 @@ int __devinit bcma_bus_register(struct bcma_bus *bus)
 	err = bcma_bus_scan(bus);
 	if (err) {
 		bcma_err(bus, "Failed to scan: %d\n", err);
-		return -1;
+		return err;
 	}
+
+	/* Early init CC core */
+	core = bcma_find_core(bus, bcma_cc_core_id(bus));
+	if (core) {
+		bus->drv_cc.core = core;
+		bcma_core_chipcommon_early_init(&bus->drv_cc);
+	}
+
+	/* Try to get SPROM */
+	err = bcma_sprom_get(bus);
+	if (err == -ENOENT) {
+		bcma_err(bus, "No SPROM available\n");
+	} else if (err)
+		bcma_err(bus, "Failed to get SPROM: %d\n", err);
 
 	/* Init CC core */
 	core = bcma_find_core(bus, bcma_cc_core_id(bus));
@@ -197,10 +278,17 @@ int __devinit bcma_bus_register(struct bcma_bus *bus)
 	}
 
 	/* Init PCIE core */
-	core = bcma_find_core(bus, BCMA_CORE_PCIE);
+	core = bcma_find_core_unit(bus, BCMA_CORE_PCIE, 0);
 	if (core) {
-		bus->drv_pci.core = core;
-		bcma_core_pci_init(&bus->drv_pci);
+		bus->drv_pci[0].core = core;
+		bcma_core_pci_init(&bus->drv_pci[0]);
+	}
+
+	/* Init PCIE core */
+	core = bcma_find_core_unit(bus, BCMA_CORE_PCIE, 1);
+	if (core) {
+		bus->drv_pci[1].core = core;
+		bcma_core_pci_init(&bus->drv_pci[1]);
 	}
 
 	/* Init GBIT MAC COMMON core */
@@ -209,13 +297,6 @@ int __devinit bcma_bus_register(struct bcma_bus *bus)
 		bus->drv_gmac_cmn.core = core;
 		bcma_core_gmac_cmn_init(&bus->drv_gmac_cmn);
 	}
-
-	/* Try to get SPROM */
-	err = bcma_sprom_get(bus);
-	if (err == -ENOENT) {
-		bcma_err(bus, "No SPROM available\n");
-	} else if (err)
-		bcma_err(bus, "Failed to get SPROM: %d\n", err);
 
 	/* Register found cores */
 	bcma_register_cores(bus);
@@ -228,6 +309,13 @@ int __devinit bcma_bus_register(struct bcma_bus *bus)
 void bcma_bus_unregister(struct bcma_bus *bus)
 {
 	struct bcma_device *cores[3];
+	int err;
+
+	err = bcma_gpio_unregister(&bus->drv_cc);
+	if (err == -EBUSY)
+		bcma_err(bus, "Some GPIOs are still in use.\n");
+	else if (err)
+		bcma_err(bus, "Can not unregister GPIO driver: %i\n", err);
 
 	cores[0] = bcma_find_core(bus, BCMA_CORE_MIPS_74K);
 	cores[1] = bcma_find_core(bus, BCMA_CORE_PCIE);
@@ -274,18 +362,18 @@ int __init bcma_bus_early_register(struct bcma_bus *bus,
 		return -1;
 	}
 
-	/* Init CC core */
+	/* Early init CC core */
 	core = bcma_find_core(bus, bcma_cc_core_id(bus));
 	if (core) {
 		bus->drv_cc.core = core;
-		bcma_core_chipcommon_init(&bus->drv_cc);
+		bcma_core_chipcommon_early_init(&bus->drv_cc);
 	}
 
-	/* Init MIPS core */
+	/* Early init MIPS core */
 	core = bcma_find_core(bus, BCMA_CORE_MIPS_74K);
 	if (core) {
 		bus->drv_mips.core = core;
-		bcma_core_mips_init(&bus->drv_mips);
+		bcma_core_mips_early_init(&bus->drv_mips);
 	}
 
 	bcma_info(bus, "Early bus registered\n");

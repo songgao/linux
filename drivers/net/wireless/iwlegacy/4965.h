@@ -272,7 +272,7 @@ il4965_hw_valid_rtc_data_addr(u32 addr)
 	((t) < IL_TX_POWER_TEMPERATURE_MIN || \
 	 (t) > IL_TX_POWER_TEMPERATURE_MAX)
 
-extern void il4965_temperature_calib(struct il_priv *il);
+void il4965_temperature_calib(struct il_priv *il);
 /********************* END TEMPERATURE ***************************************/
 
 /********************* START TXPOWER *****************************************/
@@ -916,10 +916,6 @@ struct il4965_scd_bc_tbl {
 
 /* PCI registers */
 #define PCI_CFG_RETRY_TIMEOUT	0x041
-
-/* PCI register values */
-#define PCI_CFG_LINK_CTRL_VAL_L0S_EN	0x01
-#define PCI_CFG_LINK_CTRL_VAL_L1_EN	0x02
 
 #define IL4965_DEFAULT_TX_RETRY  15
 

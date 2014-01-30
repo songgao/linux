@@ -41,17 +41,17 @@ static struct platform_device a20r_serial8250_device = {
 };
 
 static struct resource a20r_ds1216_rsrc[] = {
-        {
-                .start = 0x1c081ffc,
-                .end   = 0x1c081fff,
-                .flags = IORESOURCE_MEM
-        }
+	{
+		.start = 0x1c081ffc,
+		.end   = 0x1c081fff,
+		.flags = IORESOURCE_MEM
+	}
 };
 
 static struct platform_device a20r_ds1216_device = {
-        .name           = "rtc-ds1216",
-        .num_resources  = ARRAY_SIZE(a20r_ds1216_rsrc),
-        .resource       = a20r_ds1216_rsrc
+	.name		= "rtc-ds1216",
+	.num_resources	= ARRAY_SIZE(a20r_ds1216_rsrc),
+	.resource	= a20r_ds1216_rsrc
 };
 
 static struct resource snirm_82596_rsrc[] = {
@@ -76,14 +76,14 @@ static struct resource snirm_82596_rsrc[] = {
 		.flags = IORESOURCE_IRQ
 	},
 	{
-		.flags = 0x01                /* 16bit mpu port access */
+		.flags = 0x01		     /* 16bit mpu port access */
 	}
 };
 
 static struct platform_device snirm_82596_pdev = {
-	.name           = "snirm_82596",
-	.num_resources  = ARRAY_SIZE(snirm_82596_rsrc),
-	.resource       = snirm_82596_rsrc
+	.name		= "snirm_82596",
+	.num_resources	= ARRAY_SIZE(snirm_82596_rsrc),
+	.resource	= snirm_82596_rsrc
 };
 
 static struct resource snirm_53c710_rsrc[] = {
@@ -100,9 +100,9 @@ static struct resource snirm_53c710_rsrc[] = {
 };
 
 static struct platform_device snirm_53c710_pdev = {
-	.name           = "snirm_53c710",
-	.num_resources  = ARRAY_SIZE(snirm_53c710_rsrc),
-	.resource       = snirm_53c710_rsrc
+	.name		= "snirm_53c710",
+	.num_resources	= ARRAY_SIZE(snirm_53c710_rsrc),
+	.resource	= snirm_53c710_rsrc
 };
 
 static struct resource sc26xx_rsrc[] = {
@@ -118,31 +118,10 @@ static struct resource sc26xx_rsrc[] = {
 	}
 };
 
-static unsigned int sc26xx_data[2] = {
-	/* DTR   |   RTS    |   DSR    |   CTS     |   DCD     |   RI    */
-	(8 << 0) | (4 << 4) | (6 << 8) | (0 << 12) | (6 << 16) | (0 << 20),
-	(3 << 0) | (2 << 4) | (1 << 8) | (2 << 12) | (3 << 16) | (4 << 20)
-};
-
-static struct platform_device sc26xx_pdev = {
-	.name           = "SC26xx",
-	.num_resources  = ARRAY_SIZE(sc26xx_rsrc),
-	.resource       = sc26xx_rsrc,
-	.dev			= {
-		.platform_data	= sc26xx_data,
-	}
-};
-
-#warning "Please try migrate to use new driver SCCNXP and report the status" \
-	 "in the linux-serial mailing list."
-
-/* The code bellow is a replacement of SC26XX to SCCNXP */
-#if 0
-#include <linux/platform_data/sccnxp.h>
+#include <linux/platform_data/serial-sccnxp.h>
 
 static struct sccnxp_pdata sccnxp_data = {
 	.reg_shift	= 2,
-	.frequency	= 3686400,
 	.mctrl_cfg[0]	= MCTRL_SIG(DTR_OP, LINE_OP7) |
 			  MCTRL_SIG(RTS_OP, LINE_OP3) |
 			  MCTRL_SIG(DSR_IP, LINE_IP5) |
@@ -155,15 +134,14 @@ static struct sccnxp_pdata sccnxp_data = {
 			  MCTRL_SIG(RNG_IP, LINE_IP3),
 };
 
-static struct platform_device sc2681_pdev = {
+static struct platform_device sc26xx_pdev = {
 	.name		= "sc2681",
-	.resource	= sc2xxx_rsrc,
-	.num_resources	= ARRAY_SIZE(sc2xxx_rsrc),
+	.resource	= sc26xx_rsrc,
+	.num_resources	= ARRAY_SIZE(sc26xx_rsrc),
 	.dev	= {
 		.platform_data	= &sccnxp_data,
 	},
 };
-#endif
 
 static u32 a20r_ack_hwint(void)
 {
@@ -192,7 +170,7 @@ static u32 a20r_ack_hwint(void)
 	"	addiu	%1, -1			\n"
 	"	sw	$1, 0(%0)		\n"
 	"	sync				\n"
-		".set   pop			\n"
+		".set	pop			\n"
 	:
 	: "Jr" (PCIMT_UCONF), "Jr" (0xbc000000));
 	write_c0_status(status);
@@ -257,13 +235,13 @@ static int __init snirm_a20r_setup_devinit(void)
 	switch (sni_brd_type) {
 	case SNI_BRD_TOWER_OASIC:
 	case SNI_BRD_MINITOWER:
-	        platform_device_register(&snirm_82596_pdev);
-	        platform_device_register(&snirm_53c710_pdev);
-	        platform_device_register(&sc26xx_pdev);
-	        platform_device_register(&a20r_serial8250_device);
-	        platform_device_register(&a20r_ds1216_device);
+		platform_device_register(&snirm_82596_pdev);
+		platform_device_register(&snirm_53c710_pdev);
+		platform_device_register(&sc26xx_pdev);
+		platform_device_register(&a20r_serial8250_device);
+		platform_device_register(&a20r_ds1216_device);
 		sni_eisa_root_init();
-	        break;
+		break;
 	}
 	return 0;
 }

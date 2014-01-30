@@ -11,10 +11,6 @@
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
 /*
@@ -37,10 +33,12 @@
  their cards in their manuals.
 */
 
-#include "../comedidev.h"
+#include <linux/module.h>
+#include <linux/delay.h>
+#include <linux/pci.h>
 #include <linux/mutex.h>
 
-#define PCI_VENDOR_ID_DYNALOG		0x10b5
+#include "../comedidev.h"
 
 #define READ_TIMEOUT 50
 
@@ -149,53 +147,39 @@ static int dyna_pci10xx_di_insn_bits(struct comedi_device *dev,
 	return insn->n;
 }
 
-/* digital output bit interface */
 static int dyna_pci10xx_do_insn_bits(struct comedi_device *dev,
-			      struct comedi_subdevice *s,
-			      struct comedi_insn *insn, unsigned int *data)
+				     struct comedi_subdevice *s,
+				     struct comedi_insn *insn,
+				     unsigned int *data)
 {
 	struct dyna_pci10xx_private *devpriv = dev->private;
 
-	/* The insn data is a mask in data[0] and the new data
-	 * in data[1], each channel cooresponding to a bit.
-	 * s->state contains the previous write data
-	 */
 	mutex_lock(&devpriv->mutex);
-	if (data[0]) {
-		s->state &= ~data[0];
-		s->state |= (data[0] & data[1]);
+	if (comedi_dio_update_state(s, data)) {
 		smp_mb();
 		outw_p(s->state, devpriv->BADR3);
 		udelay(10);
 	}
 
-	/*
-	 * On return, data[1] contains the value of the digital
-	 * input and output lines. We just return the software copy of the
-	 * output values if it was a purely digital output subdevice.
-	 */
 	data[1] = s->state;
 	mutex_unlock(&devpriv->mutex);
+
 	return insn->n;
 }
 
-static int dyna_pci10xx_attach_pci(struct comedi_device *dev,
-				   struct pci_dev *pcidev)
+static int dyna_pci10xx_auto_attach(struct comedi_device *dev,
+					      unsigned long context_unused)
 {
+	struct pci_dev *pcidev = comedi_to_pci_dev(dev);
 	struct dyna_pci10xx_private *devpriv;
 	struct comedi_subdevice *s;
 	int ret;
 
-	comedi_set_hw_dev(dev, &pcidev->dev);
+	devpriv = comedi_alloc_devpriv(dev, sizeof(*devpriv));
+	if (!devpriv)
+		return -ENOMEM;
 
-	dev->board_name = dev->driver->driver_name;
-
-	ret = alloc_private(dev, sizeof(*devpriv));
-	if (ret)
-		return ret;
-	devpriv = dev->private;
-
-	ret = comedi_pci_enable(pcidev, dev->board_name);
+	ret = comedi_pci_enable(dev);
 	if (ret)
 		return ret;
 	dev->iobase = pci_resource_start(pcidev, 2);
@@ -255,37 +239,29 @@ static int dyna_pci10xx_attach_pci(struct comedi_device *dev,
 
 static void dyna_pci10xx_detach(struct comedi_device *dev)
 {
-	struct pci_dev *pcidev = comedi_to_pci_dev(dev);
 	struct dyna_pci10xx_private *devpriv = dev->private;
 
 	if (devpriv)
 		mutex_destroy(&devpriv->mutex);
-	if (pcidev) {
-		if (dev->iobase)
-			comedi_pci_disable(pcidev);
-	}
+	comedi_pci_disable(dev);
 }
 
 static struct comedi_driver dyna_pci10xx_driver = {
 	.driver_name	= "dyna_pci10xx",
 	.module		= THIS_MODULE,
-	.attach_pci	= dyna_pci10xx_attach_pci,
+	.auto_attach	= dyna_pci10xx_auto_attach,
 	.detach		= dyna_pci10xx_detach,
 };
 
-static int __devinit dyna_pci10xx_pci_probe(struct pci_dev *dev,
-					    const struct pci_device_id *ent)
+static int dyna_pci10xx_pci_probe(struct pci_dev *dev,
+				  const struct pci_device_id *id)
 {
-	return comedi_pci_auto_config(dev, &dyna_pci10xx_driver);
-}
-
-static void __devexit dyna_pci10xx_pci_remove(struct pci_dev *dev)
-{
-	comedi_pci_auto_unconfig(dev);
+	return comedi_pci_auto_config(dev, &dyna_pci10xx_driver,
+				      id->driver_data);
 }
 
 static DEFINE_PCI_DEVICE_TABLE(dyna_pci10xx_pci_table) = {
-	{ PCI_DEVICE(PCI_VENDOR_ID_DYNALOG, 0x1050) },
+	{ PCI_DEVICE(PCI_VENDOR_ID_PLX, 0x1050) },
 	{ 0 }
 };
 MODULE_DEVICE_TABLE(pci, dyna_pci10xx_pci_table);
@@ -294,7 +270,7 @@ static struct pci_driver dyna_pci10xx_pci_driver = {
 	.name		= "dyna_pci10xx",
 	.id_table	= dyna_pci10xx_pci_table,
 	.probe		= dyna_pci10xx_pci_probe,
-	.remove		= __devexit_p(dyna_pci10xx_pci_remove),
+	.remove		= comedi_pci_auto_unconfig,
 };
 module_comedi_pci_driver(dyna_pci10xx_driver, dyna_pci10xx_pci_driver);
 

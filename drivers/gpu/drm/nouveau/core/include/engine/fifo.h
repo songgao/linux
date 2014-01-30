@@ -33,15 +33,15 @@ int  nouveau_fifo_channel_create_(struct nouveau_object *,
 				  struct nouveau_object *,
 				  struct nouveau_oclass *,
 				  int bar, u32 addr, u32 size, u32 push,
-				  u32 engmask, int len, void **);
+				  u64 engmask, int len, void **);
 void nouveau_fifo_channel_destroy(struct nouveau_fifo_chan *);
 
 #define _nouveau_fifo_channel_init _nouveau_namedb_init
 #define _nouveau_fifo_channel_fini _nouveau_namedb_fini
 
 void _nouveau_fifo_channel_dtor(struct nouveau_object *);
-u32  _nouveau_fifo_channel_rd32(struct nouveau_object *, u32);
-void _nouveau_fifo_channel_wr32(struct nouveau_object *, u32, u32);
+u32  _nouveau_fifo_channel_rd32(struct nouveau_object *, u64);
+void _nouveau_fifo_channel_wr32(struct nouveau_object *, u64, u32);
 
 struct nouveau_fifo_base {
 	struct nouveau_gpuobj base;
@@ -64,6 +64,9 @@ struct nouveau_fifo_base {
 
 struct nouveau_fifo {
 	struct nouveau_engine base;
+
+	struct nouveau_event *cevent; /* channel creation event */
+	struct nouveau_event *uevent; /* async user trigger */
 
 	struct nouveau_object **channel;
 	spinlock_t lock;
@@ -92,18 +95,20 @@ int nouveau_fifo_create_(struct nouveau_object *, struct nouveau_object *,
 			 struct nouveau_oclass *, int min, int max,
 			 int size, void **);
 void nouveau_fifo_destroy(struct nouveau_fifo *);
+const char *
+nouveau_client_name_for_fifo_chid(struct nouveau_fifo *fifo, u32 chid);
 
 #define _nouveau_fifo_init _nouveau_engine_init
 #define _nouveau_fifo_fini _nouveau_engine_fini
 
-extern struct nouveau_oclass nv04_fifo_oclass;
-extern struct nouveau_oclass nv10_fifo_oclass;
-extern struct nouveau_oclass nv17_fifo_oclass;
-extern struct nouveau_oclass nv40_fifo_oclass;
-extern struct nouveau_oclass nv50_fifo_oclass;
-extern struct nouveau_oclass nv84_fifo_oclass;
-extern struct nouveau_oclass nvc0_fifo_oclass;
-extern struct nouveau_oclass nve0_fifo_oclass;
+extern struct nouveau_oclass *nv04_fifo_oclass;
+extern struct nouveau_oclass *nv10_fifo_oclass;
+extern struct nouveau_oclass *nv17_fifo_oclass;
+extern struct nouveau_oclass *nv40_fifo_oclass;
+extern struct nouveau_oclass *nv50_fifo_oclass;
+extern struct nouveau_oclass *nv84_fifo_oclass;
+extern struct nouveau_oclass *nvc0_fifo_oclass;
+extern struct nouveau_oclass *nve0_fifo_oclass;
 
 void nv04_fifo_intr(struct nouveau_subdev *);
 int  nv04_fifo_context_attach(struct nouveau_object *, struct nouveau_object *);

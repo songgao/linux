@@ -326,7 +326,7 @@ static ssize_t ad7192_write_frequency(struct device *dev,
 	unsigned long lval;
 	int div, ret;
 
-	ret = strict_strtoul(buf, 10, &lval);
+	ret = kstrtoul(buf, 10, &lval);
 	if (ret)
 		return ret;
 	if (lval == 0)
@@ -606,7 +606,7 @@ static const struct iio_chan_spec ad7192_channels[] = {
 	IIO_CHAN_SOFT_TIMESTAMP(8),
 };
 
-static int __devinit ad7192_probe(struct spi_device *spi)
+static int ad7192_probe(struct spi_device *spi)
 {
 	const struct ad7192_platform_data *pdata = spi->dev.platform_data;
 	struct ad7192_state *st;
@@ -623,17 +623,17 @@ static int __devinit ad7192_probe(struct spi_device *spi)
 		return -ENODEV;
 	}
 
-	indio_dev = iio_device_alloc(sizeof(*st));
+	indio_dev = devm_iio_device_alloc(&spi->dev, sizeof(*st));
 	if (indio_dev == NULL)
 		return -ENOMEM;
 
 	st = iio_priv(indio_dev);
 
-	st->reg = regulator_get(&spi->dev, "vcc");
+	st->reg = devm_regulator_get(&spi->dev, "vcc");
 	if (!IS_ERR(st->reg)) {
 		ret = regulator_enable(st->reg);
 		if (ret)
-			goto error_put_reg;
+			return ret;
 
 		voltage_uv = regulator_get_voltage(st->reg);
 	}
@@ -677,16 +677,11 @@ error_remove_trigger:
 error_disable_reg:
 	if (!IS_ERR(st->reg))
 		regulator_disable(st->reg);
-error_put_reg:
-	if (!IS_ERR(st->reg))
-		regulator_put(st->reg);
-
-	iio_device_free(indio_dev);
 
 	return ret;
 }
 
-static int __devexit ad7192_remove(struct spi_device *spi)
+static int ad7192_remove(struct spi_device *spi)
 {
 	struct iio_dev *indio_dev = spi_get_drvdata(spi);
 	struct ad7192_state *st = iio_priv(indio_dev);
@@ -694,10 +689,8 @@ static int __devexit ad7192_remove(struct spi_device *spi)
 	iio_device_unregister(indio_dev);
 	ad_sd_cleanup_buffer_and_trigger(indio_dev);
 
-	if (!IS_ERR(st->reg)) {
+	if (!IS_ERR(st->reg))
 		regulator_disable(st->reg);
-		regulator_put(st->reg);
-	}
 
 	return 0;
 }
@@ -716,7 +709,7 @@ static struct spi_driver ad7192_driver = {
 		.owner	= THIS_MODULE,
 	},
 	.probe		= ad7192_probe,
-	.remove		= __devexit_p(ad7192_remove),
+	.remove		= ad7192_remove,
 	.id_table	= ad7192_id,
 };
 module_spi_driver(ad7192_driver);

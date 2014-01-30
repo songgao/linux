@@ -33,6 +33,7 @@
 #include <mach/at91sam9g45.h>
 #include <mach/at91sam9x5.h>
 #include <mach/at91sam9n12.h>
+#include <mach/sama5d3.h>
 
 /*
  * On all at91 except rm9200 and x40 have the System Controller starts
@@ -89,9 +90,6 @@
  /* Internal SRAM is mapped below the IO devices */
 #define AT91_SRAM_MAX		SZ_1M
 #define AT91_VIRT_BASE		(AT91_IO_VIRT_BASE - AT91_SRAM_MAX)
-
-/* Serial ports */
-#define ATMEL_MAX_UART		7		/* 6 USART3's and one DBGU port (SAM9260) */
 
 /* External Memory Map */
 #define AT91_CHIPSELECT_0	0x10000000

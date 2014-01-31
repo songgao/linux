@@ -2575,8 +2575,7 @@ ieee80211_rx_h_action(struct ieee80211_rx_data *rx)
 
 		switch (mgmt->u.action.u.measurement.action_code) {
 		case WLAN_ACTION_SPCT_MSR_REQ:
-			if (status->band != IEEE80211_BAND_5GHZ ||
-                // songgao: broken logic here? Perhaps && should be used instead.
+			if (status->band != IEEE80211_BAND_5GHZ &&
                 status->band != IEEE80211_BAND_DSRC)
 				break;
 

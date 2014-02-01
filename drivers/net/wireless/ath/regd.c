@@ -45,14 +45,22 @@ static int __ath_regd_init(struct ath_regulatory *reg);
 /* We allow IBSS on these on a case by case basis by regulatory domain */
 #define ATH9K_5GHZ_5150_5350	REG_RULE(5150-10, 5350+10, 80, 0, 30,\
 				NL80211_RRF_PASSIVE_SCAN | NL80211_RRF_NO_IBSS)
+#define ATH9K_5GHZ_5170_5330	REG_RULE(5170, 5330, 80, 0, 30,\
+				NL80211_RRF_PASSIVE_SCAN | NL80211_RRF_NO_IBSS)
 #define ATH9K_5GHZ_5470_5850	REG_RULE(5470-10, 5850+10, 80, 0, 30,\
 				NL80211_RRF_PASSIVE_SCAN | NL80211_RRF_NO_IBSS)
 #define ATH9K_5GHZ_5725_5850	REG_RULE(5725-10, 5850+10, 80, 0, 30,\
+				NL80211_RRF_PASSIVE_SCAN | NL80211_RRF_NO_IBSS)
+#define ATH9K_5GHZ_5735_5835	REG_RULE(5735, 5835, 80, 0, 30,\
 				NL80211_RRF_PASSIVE_SCAN | NL80211_RRF_NO_IBSS)
 
 /* 5.85 - 5.95 GHz frequency band */
 #define ATH9K_DSRC_5850_5950	REG_RULE(5850, 5930, 20, 0, 43,\
 /* 172 */		NL80211_RRF_PASSIVE_SCAN)
+
+/* 5.85 - 5.925 GHz frequency band (US DSRC) */
+#define ATH9K_US_DSRC_5850_5925 REG_RULE(5855, 5925, 10, 0, 43,\
+                NL80211_RRF_PASSIVE_SCAN)
 
 #define ATH9K_2GHZ_ALL		ATH9K_2GHZ_CH01_11, \
 				ATH9K_2GHZ_CH12_13, \
@@ -64,6 +72,22 @@ static int __ath_regd_init(struct ath_regulatory *reg);
 /* This one skips what we call "mid band" */
 #define ATH9K_5GHZ_NO_MIDBAND	ATH9K_5GHZ_5150_5350, \
 				ATH9K_5GHZ_5725_5850
+
+#define ATH9K_5GHZ_US  ATH9K_5GHZ_5170_5330, \
+                       ATH9K_5GHZ_5735_5835
+
+/* Can be used for:
+ * 0x3a */
+static const struct ieee80211_regdomain ath_world_regdom_3a = {
+	.n_reg_rules = 3,
+	.alpha2 =  "US",
+	.reg_rules = {
+        ATH9K_2GHZ_CH01_11,
+		ATH9K_5GHZ_US,
+        ATH9K_US_DSRC_5850_5925 
+	}
+};
+
 
 /* Can be used for:
  * 0x60, 0x61, 0x62 */
@@ -147,7 +171,9 @@ static const struct
 ieee80211_regdomain *ath_world_regdomain(struct ath_regulatory *reg)
 {
 	switch (reg->regpair->regDmnEnum) {
-	case 0x60:
+    case 0x3a:
+        return &ath_world_regdom_3a;
+    case 0x60:
 	case 0x61:
 	case 0x62:
 		return &ath_world_regdom_60_61_62;
